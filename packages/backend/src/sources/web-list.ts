@@ -8,7 +8,7 @@ import { collapseWhitespace, stripTags } from "../lib/text.ts";
 import { isSignInUrl, pagePublicationDate, pageRules, readableDocument, type ExtractedBody } from "../content/extract.ts";
 import { sanitizeBody } from "../content/sanitize.ts";
 import { JINA_PREFIX, jinaRead } from "../providers/jina.ts";
-import { articleUtcOffset, readPublicationDate, type PublicationDate } from "./dates.ts";
+import { articleUtcOffset, readPublicationDate, readRelativeDate, type PublicationDate } from "./dates.ts";
 import { FetchError, type Candidate, type SourceRow } from "./types.ts";
 
 /**
@@ -24,7 +24,7 @@ function elementDate(el: ReturnType<cheerio.CheerioAPI>, utcOffset?: string): Pu
     const date = readPublicationDate(value, utcOffset);
     if (date.publishedAt) return date;
   }
-  return { publishedAt: null, publicationTime: null };
+  return readRelativeDate(el.text(), new Date(), utcOffset);
 }
 
 /** Prefix rules ignore the scheme: a Jina listing of an http:// address links its posts over http. */
