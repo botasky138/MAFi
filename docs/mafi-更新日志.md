@@ -6,6 +6,15 @@
 
 ---
 
+## 2026-10-29（Asia/Tokyo ~21:00）CN 直连本地地址自动探测（应对 DHCP 变化）
+
+- **做法**：`MAFI_CN_DIRECT_LOCAL_ADDRESS` 支持 `auto`（未设置时默认 auto；显式 IPv4 仍为覆盖值；`off` 关闭）。`cn-direct.ts` 新增 `pickLocalAddress()`：用 `os.networkInterfaces()` 选物理网卡 IPv4，跳过 internal、169.254、198.18/15 及 FlClash/Meta/TUN/Wintun/vEthernet/VMware/VirtualBox/Loopback/docker/WSL/Tailscale/蓝牙 等虚拟网卡；优先 WLAN/Wi-Fi/无线，其次 Ethernet/以太网。`http-fetch.ts` 缓存探测结果 60 s，地址变化时重建 Agent；连接报 EADDRNOTAVAIL/ENETUNREACH 等时清缓存重新探测。选中地址首次以 info 打印 `[cn-direct] auto local address: …`。
+- **.env**：`MAFI_CN_DIRECT_LOCAL_ADDRESS=auto`（备份 `.env.bak-20261029-cnauto`）。FlClash 未做任何改动。
+- **测试**：`tests/cn-direct.standalone.test.ts` 新增网卡选择（mock 接口）与错误判定用例，5/5 通过；tsc 通过；standalone 全量 252 pass / 3 fail（与改动前相同，openssl 缺失等既有问题）。
+- **结果**：探测到 `192.168.71.47 (WLAN)`；pboc-news/stcn-news/csrc-market/safe-news 采集 ok；api2.cursor.sh/grok.com/cursor.com 前后均 200，FlClash shared_preferences.json 哈希不变。
+- **Commit**：`b7ea3ef`（代码）；本条日志见下一提交。
+
+---
 ## 2026-10-29（Asia/Tokyo ~20:50）CN 源直连：绑定 WLAN 地址 + DoH 绕过 FlClash TUN（FlClash 保持全局不动）
 
 - **做法（方案 D）**：新增 `packages/backend/src/lib/cn-direct.ts`；`http-fetch.ts` 对 `*.cn` 及 nmpa/pbc/stats/csrc/safe/shfe/smpaa/nhsa/stcn 域名，在 `MAFI_CN_DIRECT_LOCAL_ADDRESS` 设置时：用 `MAFI_CN_DOH_URL`（默认 `https://223.5.5.5/resolve`，同样从该本地地址发出）解析真实 IP，拒绝私网/198.18 结果，undici Agent 以 `localAddress` 直连，SNI/Host 不变、证书校验开启。其余源仍走 `EGRESS_PROXY_URL`，私网防护不变。
