@@ -6,6 +6,16 @@
 
 ---
 
+## 2026-10-29（Asia/Tokyo ~20:50）CN 源直连：绑定 WLAN 地址 + DoH 绕过 FlClash TUN（FlClash 保持全局不动）
+
+- **做法（方案 D）**：新增 `packages/backend/src/lib/cn-direct.ts`；`http-fetch.ts` 对 `*.cn` 及 nmpa/pbc/stats/csrc/safe/shfe/smpaa/nhsa/stcn 域名，在 `MAFI_CN_DIRECT_LOCAL_ADDRESS` 设置时：用 `MAFI_CN_DOH_URL`（默认 `https://223.5.5.5/resolve`，同样从该本地地址发出）解析真实 IP，拒绝私网/198.18 结果，undici Agent 以 `localAddress` 直连，SNI/Host 不变、证书校验开启。其余源仍走 `EGRESS_PROXY_URL`，私网防护不变。
+- **注意**：undici 的 `localAddress` 必须作为 Agent/Client 选项，放在 `connect: {}` 内会被忽略。
+- **.env**：新增 `MAFI_CN_DIRECT_LOCAL_ADDRESS=192.168.71.47`、`MAFI_CN_DOH_URL`（备份 `.env.bak-cndirect-20261029`）。WLAN 地址若因 DHCP 变化需同步修改。
+- **测试**：`tests/cn-direct.standalone.test.ts`（host 匹配、DoH 结果过滤）+ egress 相关 standalone 测试 8/8 通过；tsc 通过。
+- **结果**：pboc/stcn/csrc/smpaa/nhsa-news/nbs/safe/shfe 采集 ok；nhsa-col-185/186/187 为 “no items matched (html)”（解析问题，非网络）；nmpa 走独立 curl 路径，仍 TLS 失败（未改）。
+- **Commit**：`b85aad0`（代码）；本条日志见下一提交。
+
+---
 ## 2026-10-29（Asia/Tokyo ~19:30）MAFi 服务异常 + AA 新模型未见：FlClash fake-IP 被出站防护拒绝
 
 ### 摘要
