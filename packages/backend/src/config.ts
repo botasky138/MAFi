@@ -42,6 +42,9 @@ export const config = {
   // Every generated absolute link uses this address, whatever Host a request arrives with.
   siteUrl: str("SITE_URL", SITE.defaultUrl).replace(/\/+$/, ""),
   egressProxyUrl: env.EGRESS_PROXY_URL || null,
+  /** Local (physical NIC) address for China-direct sources; unset keeps them on the normal route (cn-direct.ts). */
+  cnDirectLocalAddress: env.MAFI_CN_DIRECT_LOCAL_ADDRESS || null,
+  cnDohUrl: env.MAFI_CN_DOH_URL || "https://223.5.5.5/resolve",
   allowPrivateNetworkFetch: bool("ALLOW_PRIVATE_NETWORK_FETCH", false),
   /** Whole host names of self-hosted feed services on private addresses; only listing fetches use them. */
   privateFeedHosts: (env.PRIVATE_FEED_HOSTS || "").split(",").map((v) => v.trim().toLowerCase()).filter(Boolean),

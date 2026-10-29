@@ -5,6 +5,7 @@ import { Agent, Pool, ProxyAgent, fetch as undiciFetch, type Dispatcher } from "
 import { config } from "../config.ts";
 import { assertPublicUrl, guardedLookup } from "./url.ts";
 import { createEgressProxy, createEgressResolver, OUTBOUND_HTTP_OPTIONS } from "./egress-proxy.ts";
+import { createCnDirect, isCnDirectHost } from "./cn-direct.ts";
 import { DEPLOYMENT, SITE } from "@aihot/site";
 
 /**
@@ -27,6 +28,17 @@ let resolveEgress: ReturnType<typeof createEgressResolver> | null = null;
 
 function egressResolver() {
   return resolveEgress ??= createEgressResolver(config.egressProxyUrl!);
+}
+
+let cnDirectState: ReturnType<typeof createCnDirect> | null = null;
+function cnDirectRoute() {
+  return cnDirectState ??= createCnDirect(config.cnDirectLocalAddress!, config.cnDohUrl, OUTBOUND_HTTP_OPTIONS, destinationPool);
+}
+/** Chinese sources dialled from MAFI_CN_DIRECT_LOCAL_ADDRESS with DoH answers (cn-direct.ts). */
+function cnDirect(url: URL, route: EgressRoute, privateHosts: readonly string[]): boolean {
+  if (route !== "egress" || !config.cnDirectLocalAddress) return false;
+  const host = hostOf(url);
+  return !privateHosts.includes(host) && isCnDirectHost(host);
 }
 
 function hostOf(url: URL): string {
@@ -123,7 +135,7 @@ export async function guardedFetch(input: string, opts: GuardedFetchOptions = {}
   const configuredHost = hostOf(new URL(input));
   const privateHosts = opts.privateFeedHost && config.privateFeedHosts.includes(configuredHost) ? [configuredHost] : [];
   const check = (target: string) => withinDeadline(assertPublicUrl(target, config.allowPrivateNetworkFetch,
-    proxied(new URL(target), route, privateHosts) ? egressResolver() : undefined, privateHosts), signal);
+    cnDirect(new URL(target), route, privateHosts) ? cnDirectRoute().resolve : proxied(new URL(target), route, privateHosts) ? egressResolver() : undefined, privateHosts), signal);
   let url = await check(input);
   const maxRedirects = opts.maxRedirects ?? 5;
   const maxBytes = opts.maxBytes ?? 8 * 1024 * 1024;
@@ -142,7 +154,7 @@ export async function guardedFetch(input: string, opts: GuardedFetchOptions = {}
       headers: Object.fromEntries(headers),
       body: requestBody,
       redirect: "manual",
-      dispatcher: dispatcherFor(proxied(url, route, privateHosts), privateHosts.includes(hostOf(url))),
+      dispatcher: cnDirect(url, route, privateHosts) ? cnDirectRoute().agent : dispatcherFor(proxied(url, route, privateHosts), privateHosts.includes(hostOf(url))),
       signal,
     });
     if ([301, 302, 303, 307, 308].includes(res.status) && res.headers.get("location")) {
