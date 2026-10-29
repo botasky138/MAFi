@@ -6,6 +6,13 @@
 
 ---
 
+## 2026-10-29（Asia/Tokyo ~21:30）NMPA「为什么今天才不行」复盘 + 切换转载源（中国医药报）
+
+- **复盘**：本库 sources/articles 于今天 20:45 重新初始化，无历史；以 `.data/logs/collect-*.log` 为准。10-23～10-28 nmpa 两源每天几十次 ok（found=20），走的是旧兜底 `curl.exe --noproxy *`（undici 先 412，curl 再成功），间歇性 schannel TLS 失败（curl 35）。最后一次 ok 为 10-29 00:48 JST；00:58 起变为 "Blocked private address"（fake-ip 198.18），之后 curl 兜底失败、5a1515e 删除兜底后为 412。即：之前确实可用（非静默失败），只是带不少失败。
+- **今天的复现（2 次）**：①旧 curl 参数 + `--interface 192.168.71.47` + DoH `--resolve 47.93.95.89` → 412 + `$_ts`（瑞数）；②旧命令原样（经 TUN）→ curl 35 TLS 握手失败。旧路径已无法合规恢复，判断为站点对本出口/客户端开启 JS 挑战（不排除今天诊断请求触发），不绕过。
+- **候选测试（各 1 次，WLAN 直连 + DoH）**：cmde.org.cn 202 + `$_ts`（同为瑞数）；mpa.gd.gov.cn 连接失败；yjj.sh.gov.cn 404；gov.cn 部门文件 200（JS 渲染，未采用）；cnpharm.com 200 静态列表。
+- **采用**：新增 `web-cnpharm-device-policy`（/ylqx/zcfg/，替代 web-nmpa-devices）、`web-cnpharm-device-supervision`（/ylqx/jxjg/，替代 web-nmpa-trends），120 分钟，`_aihot.replacesSourceIds` 标注替代关系（config-keys 新增该键）；`cnpharm.com` 加入 cn-direct。nmpa 两源 enabled=false（配置保留）；auto/preview 采集默认列表替换。首轮 collect：各 found=9 / created=8。
+- **提交**：b21cd2d
 ## 2026-10-29（Asia/Tokyo ~21:20）NMPA 412 诊断：瑞数 JS 挑战，去掉 curl 兜底
 
 - **根因**：nmpa.gov.cn 为瑞数（Ruishu）JS 挑战 WAF，非网络/TUN 问题。经 cn-direct（WLAN 直连、DoH 解析 47.93.95.89）请求列表页得 HTTP 412，正文为 `<meta id=… r='m'>` + `$_ts.nsd/$_ts.cd` 引导脚本；curl 直连（--interface + --resolve）、`/directory/web/nmpa/...` 静态路径、Jina Reader 均同为 412 挑战页。自动化浏览器（Playwright+系统 Edge，经本机仅放行 nmpa 的 CONNECT 转发直连）能执行站点 JS 拿到 `NfBCSins2OywS/NfBCSins2OywT` cookie，但复载列表页返回 400（拒绝自动化浏览器）；`msedge --headless=new --dump-dom` 同样被拒。走 7890/TUN 日本出口连接直接被关闭（ERR_CONNECTION_CLOSED，境外 IP 不可达）。官方无公告 RSS/API（仅 UDI 数据 RSS）。
