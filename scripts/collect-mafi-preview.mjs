@@ -29,7 +29,7 @@ if (process.env.COLLECT_ENABLED !== "true") {
 }
 
 const defaultSources = [
-  "web-nmpa-devices", "web-nmpa-trends", "web-smpaa-notices", "web-nhsa-news",
+  "web-cnpharm-device-policy", "web-cnpharm-device-supervision", "web-smpaa-notices", "web-nhsa-news",
   "web-nbs-releases", "web-pboc-news", "web-safe-news", "web-csrc-market",
   "web-shfe-notices", "rss-fed-press", "rss-cnbc-top", "web-stcn-news",
 ];

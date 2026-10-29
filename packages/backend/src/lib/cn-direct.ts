@@ -10,7 +10,7 @@ import os from "node:os";
 import { Agent, request, type Dispatcher } from "undici";
 import { isBlockedAddress } from "./url.ts";
 
-const CN_DIRECT_SUFFIXES = ["nmpa.gov.cn", "pbc.gov.cn", "stats.gov.cn", "csrc.gov.cn", "safe.gov.cn", "shfe.com.cn", "smpaa.cn", "nhsa.gov.cn", "stcn.com"];
+const CN_DIRECT_SUFFIXES = ["nmpa.gov.cn", "pbc.gov.cn", "stats.gov.cn", "csrc.gov.cn", "safe.gov.cn", "shfe.com.cn", "smpaa.cn", "nhsa.gov.cn", "stcn.com", "cnpharm.com"];
 
 /** *.cn and the listed Chinese source domains (with their subdomains). */
 export function isCnDirectHost(host: string): boolean {

@@ -33,7 +33,7 @@
       ],
       "site_fulltext": false,
       "syndicate_fulltext": false,
-      "enabled": true
+      "enabled": false
     },
     {
       "id": "web-nmpa-trends",
@@ -65,6 +65,82 @@
         "医药",
         "医疗器械",
         "官方"
+      ],
+      "site_fulltext": false,
+      "syndicate_fulltext": false,
+      "enabled": false
+    },
+    {
+      "id": "web-cnpharm-device-supervision",
+      "name": "中国医药报 · 器械监管（转载 NMPA 器械监管动态）",
+      "kind": "web_list",
+      "config": {
+        "url": "https://www.cnpharm.com/ylqx/jxjg/",
+        "parseMode": "html",
+        "itemSelector": "#Recommend li",
+        "linkSelector": ".Rig > p > a",
+        "titleSelector": ".Rig > p > a",
+        "publishedAtRegex": "href=[\"'](?:https?:)?(?://www\\.cnpharm\\.com)?/c/(\\d{4}-\\d{2}-\\d{2})/",
+        "publishedAtUtcOffset": "+08:00",
+        "sortByPublishedAt": true,
+        "allowUrlPrefixes": [
+          "https://www.cnpharm.com/c/"
+        ],
+        "_aihot": {
+          "initialBackfillLimit": 8,
+          "initialBackfillMonths": 12,
+          "replacesSourceIds": [
+            "web-nmpa-trends"
+          ]
+        }
+      },
+      "tier": "T1",
+      "owner_entity_id": "nmpa",
+      "participation_mode": "editorial",
+      "interval_minutes": 120,
+      "tags": [
+        "医药",
+        "医疗器械",
+        "官方",
+        "转载"
+      ],
+      "site_fulltext": false,
+      "syndicate_fulltext": false,
+      "enabled": true
+    },
+    {
+      "id": "web-cnpharm-device-policy",
+      "name": "中国医药报 · 器械政策法规（转载 NMPA 医疗器械公告）",
+      "kind": "web_list",
+      "config": {
+        "url": "https://www.cnpharm.com/ylqx/zcfg/",
+        "parseMode": "html",
+        "itemSelector": "#Recommend li",
+        "linkSelector": ".Rig > p > a",
+        "titleSelector": ".Rig > p > a",
+        "publishedAtRegex": "href=[\"'](?:https?:)?(?://www\\.cnpharm\\.com)?/c/(\\d{4}-\\d{2}-\\d{2})/",
+        "publishedAtUtcOffset": "+08:00",
+        "sortByPublishedAt": true,
+        "allowUrlPrefixes": [
+          "https://www.cnpharm.com/c/"
+        ],
+        "_aihot": {
+          "initialBackfillLimit": 8,
+          "initialBackfillMonths": 12,
+          "replacesSourceIds": [
+            "web-nmpa-devices"
+          ]
+        }
+      },
+      "tier": "T1",
+      "owner_entity_id": "nmpa",
+      "participation_mode": "editorial",
+      "interval_minutes": 120,
+      "tags": [
+        "医药",
+        "医疗器械",
+        "官方",
+        "转载"
       ],
       "site_fulltext": false,
       "syndicate_fulltext": false,

@@ -4,8 +4,8 @@ import { test } from "node:test";
 import { isCnDirectHost, isStaleLocalAddressError, pickLocalAddress, publicAddressesFrom } from "@aihot/backend/lib/cn-direct";
 
 test("CN-direct host matching", () => {
-  for (const h of ["www.pbc.gov.cn", "www.stcn.com", "stcn.com", "www.smpaa.cn", "www.shfe.com.cn", "x.example.cn"]) assert.equal(isCnDirectHost(h), true, h);
-  for (const h of ["grok.com", "api2.cursor.sh", "notstcn.com", "cn.example.com", "27.148.154.33"]) assert.equal(isCnDirectHost(h), false, h);
+  for (const h of ["www.pbc.gov.cn", "www.stcn.com", "stcn.com", "www.smpaa.cn", "www.shfe.com.cn", "www.cnpharm.com", "x.example.cn"]) assert.equal(isCnDirectHost(h), true, h);
+  for (const h of ["grok.com", "api2.cursor.sh", "notstcn.com", "notcnpharm.com", "cn.example.com", "27.148.154.33"]) assert.equal(isCnDirectHost(h), false, h);
 });
 
 test("DoH answers: public A records only", () => {
