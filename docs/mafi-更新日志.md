@@ -16,7 +16,8 @@
 
 ### 修复
 - 本机 `.env` 追加 `EGRESS_PROXY_URL=http://127.0.0.1:7890`（先备份到 `.data/backups/`，未改 FlClash 配置）：egress 路由的境外域名经 FlClash 代理并由代理解析，地址检查仍生效。
-- 恢复 `scripts/_restore-selected-floor.mjs`（d425d04），去掉硬编码库连接，改读 DATABASE_URL/PREVIEW_DATABASE_URL。
+- 提交：3629eaa（仅本更新日志）。
+- 恢复 `scripts/_restore-selected-floor.mjs`（本机文件，`scripts/_*` 被 .gitignore 忽略不入库；内容取自 2b7bf9d），去掉硬编码库连接，改读 DATABASE_URL/PREVIEW_DATABASE_URL。
 - 备份 AA 缓存后把 `nextRefreshAt` 置为过去，触发一次强制刷新；重启 preview（API/worker/web）与 auto-loop。
 
 ### 验证
