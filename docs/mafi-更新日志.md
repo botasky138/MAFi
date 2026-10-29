@@ -364,3 +364,18 @@
   4. 强制刷新 AA free snapshot 写盘 `.data/preview/mafi-readers/aa-models.json`（`fetchedAt=2026-10-24T03:09:35.905Z`，709 models），重启 API 加载内存缓存。
 - **验证**：floor `all≈57` / `ai=16`（github 8 + deepseek 8，elig 全过，sel 8）；`/all` HTML DeepSeek/GitHub 可见；`GET /api/mafi-readers/aa-models` `status=ready`；`/leaderboard` SSR 含新 `fetchedAt`。HF Node 仍 UND_ERR_CONNECT_TIMEOUT（PowerShell 可达），未在本轮强修。
 - **运维**：未停 autoLoop；未 push；未改密钥。刷新：`http://127.0.0.1:3000/all`、`http://127.0.0.1:3000/`、`http://127.0.0.1:3000/leaderboard`。
+
+## 2026-10-29（Asia/Tokyo ~19:55）FlClash fake-ip-filter + rule 模式：国内源不再 198.18 拦截
+
+- **现象**：MAFi 出站修好后（`EGRESS_PROXY_URL=http://127.0.0.1:7890`，`.cn` 仍走 DIRECT），国内源（nmpa/pbc/stats/csrc/safe/shfe/smpaa/nhsa/stcn）在 FlClash TUN fake-IP 下解析到 `198.18.0.0/15`，被 `url.ts` SSRF 门控打成 `Blocked private address`；当日 collect 日志大量失败。
+- **根因**：FlClash `enhanced-mode: fake-ip` + DNS hijack；MAFi `guardedLookup` 拒绝假 IP。仅加 `fake-ip-filter` 后 DNS 变真 IP，但 `patchClashConfig.mode=global` 仍把国内流量送上境外节点 → TLS handshake 失败 / `fetch failed`。订阅 profile 本身是 `mode: rule` 且含 `DOMAIN-SUFFIX,cn,DIRECT` / `GEOIP,CN,DIRECT`。
+- **处理（AIPC / FlClash，可回滚）**：
+  1. 备份：`AIHOT-main\.data\backups\flclash-20261029-194109\`（含 mode 变更前 shared_preferences）+ Desktop 副本。
+  2. `shared_preferences.json` → `patchClashConfig.dns.fake-ip-filter` 增加 `+.cn` 与各源域名（nmpa/pbc/stats/csrc/safe/shfe/smpaa/nhsa/stcn）。
+  3. 将 `patchClashConfig.mode` 从 `global` 改回 `rule`（与 profile 一致），使 CN DIRECT 生效。
+  4. FlClash UI/进程重启以加载配置（无外部 controller API）；未改 ByteVirt 脚本/例行。
+- **验证（Asia/Tokyo）**：
+  - DNS：`www.nmpa.gov.cn`→`47.93.95.89` 等真 IP；`baidu`/`google` 仍 `198.18.x`。
+  - TLS：`pbc`/`stcn`/`csrc`/`baidu` HTTP 200；`nmpa` 412（站方 WAF，非假 IP）。
+  - collect：`web-pboc-news` ok found=15 created=1；`web-stcn-news` ok found=10 created=10；`web-csrc-market` ok found=18；`web-nmpa-devices` 仍 412（curl fallback），已不再 `Blocked private address`。
+- **运维**：`EGRESS_PROXY_URL` 未改；未 push；未动 ByteVirt 高峰测试。若需恢复全局代理：把 `patchClashConfig.mode` 设回 `global` 并自备份还原 `fake-ip-filter`（国内源会再次被假 IP 拦）。
