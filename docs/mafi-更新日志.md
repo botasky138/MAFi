@@ -6,6 +6,28 @@
 
 ---
 
+## 2026-10-29（Asia/Tokyo ~19:30）MAFi 服务异常 + AA 新模型未见：FlClash fake-IP 被出站防护拒绝
+
+### 摘要
+- **现象**：网站自 10-28 深夜起不再收录新文章（worker 告警“网站停止收录新文章”约 18.5 小时）；`/leaderboard` AA 模型榜 status=stale，停在 10-27 快照 715 个模型，未出现 10-28 新模型。
+- **根因 1（有证据）**：FlClash TUN 开启 fake-IP DNS，系统 DNS 把外部域名解析到 198.18.0.0/15；`packages/backend/src/lib/url.ts` 出站防护按设计拒绝该段 → 采集日志 10-29 共 1042 次 `Blocked private address`（10-28 仅 10 次），AA 刷新同样失败。AA 上游与密钥本身正常（直连验证 200，4 页 716 个模型，intelligence_index_version=5）。
+- **根因 2**：失败刷新会把 `nextRefreshAt` 推后 24h，因此即使网络恢复也要等到 10-30 才会再拉取。
+- **根因 3**：auto-loop 每次 analyze 后调用的 `scripts/_restore-selected-floor.mjs` 在 PR1 合并时丢失（只在 backup 分支 2b7bf9d），每小时报 MODULE_NOT_FOUND。
+
+### 修复
+- 本机 `.env` 追加 `EGRESS_PROXY_URL=http://127.0.0.1:7890`（先备份到 `.data/backups/`，未改 FlClash 配置）：egress 路由的境外域名经 FlClash 代理并由代理解析，地址检查仍生效。
+- 恢复 `scripts/_restore-selected-floor.mjs`（d425d04），去掉硬编码库连接，改读 DATABASE_URL/PREVIEW_DATABASE_URL。
+- 备份 AA 缓存后把 `nextRefreshAt` 置为过去，触发一次强制刷新；重启 preview（API/worker/web）与 auto-loop。
+
+### 验证
+- AA：`GET :3001/api/mafi-readers/aa-models` → 200 ready，716 个模型（新增 Gemini 4 Carbon (High)，2026-10-28，Google），fetchedAt 2026-10-29 19:28 JST，下次 10-30 19:28 JST；`/leaderboard` 200 且含新模型。
+- HTTP：`:3000/` 200、`:3000/leaderboard` 200、`:3000/api/health` 200、`:3001/api/health` 200、`:3001/api/mafi-readers/codex-resets` 200。
+- 采集：重启后首轮 OpenAI/Anthropic/HF/DeepMind/CNBC/Fed 等恢复 ok 并有新增；worker 告警“已恢复”。
+
+### 待确认
+- `.cn` 及国内直连源（nmpa/pbc/stats/csrc/safe/shfe/smpaa/nhsa/stcn）按设计直连，fake-IP 下仍被拒。需在 FlClash 为这些域名加 fake-ip-filter（或改 redir-host），或关闭 TUN 的 DNS 劫持；未擅自改动。
+
+---
 ## 2026-10-27（Asia/Tokyo ~16:40）赞/踩点击无效：localhost ↔ 127.0.0.1 Origin
 
 ### 摘要
