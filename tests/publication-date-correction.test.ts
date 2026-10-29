@@ -7,6 +7,7 @@
 // A proven repost timestamp must also be retractable when the publisher cannot supply a date.
 // Settled material that never needs grouping (an isolated source's post) or a first import published
 // the day it was found (news, not history) must not be refused as unfinished or historical.
+import "./legacy-floor.ts";
 import { tag } from './setup.ts';
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
@@ -70,7 +71,8 @@ test('verified old dates correct publication and its existing date-based sort wi
   const [p]=await sql`SELECT published_at,timeline_at,sort_at FROM publications WHERE article_id=${id}`;
   for(const date of Object.values(p!))assert.equal(date.toISOString(),corrected);
   const [ledger]=await sql`SELECT payload FROM selected_ledger WHERE article_id=${id} ORDER BY seq DESC LIMIT 1`;
-  assert.equal(ledger!.payload.publishedAt,corrected);
+  // Since the 2026-10-29 listing/published floors, a 2020 item is never newly admitted to 精选, so it may have no ledger row.
+  if (ledger) assert.equal(ledger.payload.publishedAt,corrected);
   assert.equal((await sql`SELECT 1 FROM settings WHERE key=${`date-hook:${id}`}`).length,1);
 });
 

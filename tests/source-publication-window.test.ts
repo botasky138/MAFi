@@ -3,6 +3,7 @@
 // listings are not discarded before enrichment; old, future and missing dates stay out of storage and
 // preview, and excluded history never queues paid work. Previews also apply the source's URL,
 // category and noise rules as collection does.
+import "./legacy-floor.ts";
 import { tag } from "./setup.ts";
 import assert from "node:assert/strict";
 import http from "node:http";

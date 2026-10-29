@@ -3,6 +3,7 @@
 import { sql, type Db } from "../db.ts";
 import { fillScheduledPublications, identityKeyFor, reuseExternalMaterialIdentities, STALE_ON_DISCOVERY_MS, upsertMaterial } from "../content/materials.ts";
 import { PresentationMismatch } from "../content/presentation.ts";
+import { isBeforeIngestFloor } from "../content/floor.ts";
 import { HttpStatusError } from "../lib/http-fetch.ts";
 import { identityKeyForUrl } from "../lib/url.ts";
 import { sha256 } from "../lib/ids.ts";
@@ -222,6 +223,8 @@ async function store(sourceId: string, runId: number, candidates: CollectionCand
   let created = 0;
   let revised = 0;
   for (const c of candidates) {
+    // Hard floor: items with a real publish date before MAFI_INGEST_PUBLISHED_FLOOR never enter storage.
+    if (isBeforeIngestFloor(c.publishedAt)) continue;
     const material = { ...c, sourceId, via: "fetch" as const, backfill };
     let res;
     try { res = await upsertMaterial(material); }

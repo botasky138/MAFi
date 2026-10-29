@@ -2,6 +2,7 @@
 // manual overrides and grouping, then record selected-set changes in the sync ledger.
 // Rebuilding only re-reads stored results; it never calls a model.
 import { toPublicApiCategory } from "@aihot/contracts/taxonomy";
+import { meetsPublishedFloor } from "../content/floor.ts";
 import { SITE } from "@aihot/site";
 import { one, sql, type Tx } from "../db.ts";
 import { sha256, stableJson } from "../lib/ids.ts";
@@ -320,7 +321,8 @@ export async function publishArticleTx(tx: Tx, articleId: string, options: Publi
   // Discovery may promote backfill when *discovered* at/after listing floor (fixed LISTING_FLOOR_BEIJING_DATE+).
   // Gate on discovered_at — not timeline_at — so freshly collected AI/GitHub changelogs whose
   // source publish date is older still surface on /all and 精选; timeline_at stays archival.
-  if (article.backfill && article.discovered_at > sortAt && article.discovered_at >= dayFloor) {
+  // Never promote by fetch time when the real publish date is missing or before the ingest floor.
+  if (article.backfill && meetsPublishedFloor(article.published_at) && article.discovered_at > sortAt && article.discovered_at >= dayFloor) {
     sortAt = article.discovered_at;
   } else if (selected && membership?.fact_id && !isIndependentSelectedSource(source.id)) {
     const [anchor] = await tx<{ t: Date | null }[]>`
@@ -333,6 +335,8 @@ export async function publishArticleTx(tx: Tx, articleId: string, options: Publi
   // New admissions only when list time is on/after listing floor; already-selected older rows stay in DB (feeds filter them).
   let effectiveSelected = selected;
   if (selected && !previous?.selected && sortAt < dayFloor) effectiveSelected = false;
+  // Hard floor: 精选 only for items with a parsed publish date on/after MAFI_INGEST_PUBLISHED_FLOOR.
+  if (effectiveSelected && !meetsPublishedFloor(article.published_at)) effectiveSelected = false;
 
   const next = {
     source_id: source.id, first_party: source.tier === "T1",
@@ -368,10 +372,10 @@ export async function publishArticleTx(tx: Tx, articleId: string, options: Publi
     INSERT INTO publications (article_id, analysis_id, revision, visibility, eligible, selected, selection_candidate, title, original_title, summary,
       reason, category, tags, score, source_id, channel, first_party, url, published_at, discovered_at, timeline_at, backfill,
       selected_ready_at, visible_after, body_mode, syndicate, indexable, story_id, fact_id, search_text, sort_at, updated_at)
-    VALUES (${articleId}, ${analysis?.id ?? null}, ${revision}, ${visibility}, ${eligible}, ${selected}, ${selectionCandidate}, ${next.title},
-      ${originalTitle}, ${summary}, ${reason}, ${category}, ${tags}, ${next.score}, ${source.id}, ${channel}, ${source.tier === "T1"},
+    VALUES (${articleId}, ${analysis?.id ?? null}, ${revision}, ${visibility}, ${eligible}, ${next.selected}, ${selectionCandidate}, ${next.title},
+      ${originalTitle}, ${summary}, ${next.reason}, ${category}, ${tags}, ${next.score}, ${source.id}, ${channel}, ${source.tier === "T1"},
       ${article.url}, ${article.published_at}, ${article.discovered_at}, ${article.timeline_at}, ${article.backfill},
-      ${selectedReadyAt}, ${visibleAfter}, ${bodyMode}, ${syndicate}, ${indexable}, ${next.story_id}, ${next.fact_id}, ${searchText}, ${sortAt}, now())
+      ${selectedReadyAt}, ${next.visible_after}, ${bodyMode}, ${syndicate}, ${indexable}, ${next.story_id}, ${next.fact_id}, ${searchText}, ${sortAt}, now())
     ON CONFLICT (article_id) DO UPDATE SET
       analysis_id = EXCLUDED.analysis_id, revision = EXCLUDED.revision, visibility = EXCLUDED.visibility,
       eligible = EXCLUDED.eligible, selected = EXCLUDED.selected, selection_candidate = EXCLUDED.selection_candidate, title = EXCLUDED.title, original_title = EXCLUDED.original_title,

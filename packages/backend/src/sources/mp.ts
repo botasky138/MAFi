@@ -2,6 +2,7 @@
 // article bodies; every enabled account is checked once per source interval.
 import { sql } from "../db.ts";
 import { upsertMaterial } from "../content/materials.ts";
+import { isBeforeIngestFloor } from "../content/floor.ts";
 import { enqueue, QUEUES } from "../jobs/queue.ts";
 import { queueProcessing } from "../jobs/content.ts";
 import { stripTags } from "../lib/text.ts";
@@ -55,6 +56,7 @@ export async function checkMpAccount(sourceId: string, reason: "schedule" | "man
     for (const p of posts) {
       if (!p.url || !p.title || fetched >= MAX_NEW_PER_CHECK) continue;
       const publishedAt = p.post_time ? new Date(p.post_time * 1000) : null;
+      if (isBeforeIngestFloor(publishedAt)) continue;
       if (firstCheck && publishedAt && Date.now() - publishedAt.getTime() > FIRST_CHECK_WINDOW_MS) continue;
       // Same identity rule as every entrance: the long link without tracking parameters. A known post is
       // skipped, unless its body failed for a passing reason: then it is tried again a few times.

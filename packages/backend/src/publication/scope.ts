@@ -5,6 +5,7 @@
 // derived once, at publish time, by publish.ts and rules.ts.
 import { beijingMidnight } from "@aihot/contracts/time";
 import { sql } from "../db.ts";
+import { INGEST_PUBLISHED_FLOOR } from "../content/floor.ts";
 import { independentSelectedSources } from './rules.ts';
 
 /**
@@ -24,7 +25,12 @@ export const LISTING_FLOOR_BEIJING_DATE = "2026-10-23" as const;
  * Older rows stay in DB and on detail/archive routes; these four surfaces do not resurface them.
  */
 export function listingFreshCondition(now: Date) {
-  return sql`p.sort_at >= ${listingDayFloor(now)}`;
+  return sql`p.sort_at >= ${listingDayFloor(now)} AND ${publishedFloorCondition()}`;
+}
+
+/** Real publish date present and on/after MAFI_INGEST_PUBLISHED_FLOOR (no fetch-time fallback). */
+export function publishedFloorCondition() {
+  return sql`(p.published_at IS NOT NULL AND p.published_at >= ${INGEST_PUBLISHED_FLOOR})`;
 }
 
 /** These reports share their fact's display slot; independent sources keep their own selected card. */
@@ -52,7 +58,7 @@ export function storyReportCondition(now: Date) {
 
 /** Selected set as the website shows it (home timeline, reading groups, topics): every selected report. */
 export function selectedCondition(now: Date) {
-  return sql`p.visibility = 'public' AND p.selected AND p.visible_after <= ${now}`;
+  return sql`p.visibility = 'public' AND p.selected AND p.visible_after <= ${now} AND ${publishedFloorCondition()}`;
 }
 
 /**
@@ -60,7 +66,7 @@ export function selectedCondition(now: Date) {
  * reports of each fact, plus any independently displayed selected articles (publish.ts settleSeats).
  */
 export function seatedCondition(now: Date) {
-  return sql`p.visibility = 'public' AND p.selected AND p.seat AND p.visible_after <= ${now}`;
+  return sql`p.visibility = 'public' AND p.selected AND p.seat AND p.visible_after <= ${now} AND ${publishedFloorCondition()}`;
 }
 
 /** The report was published from a composite (multi-topic) analysis: it only mentions facts. */

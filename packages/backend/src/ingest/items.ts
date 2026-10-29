@@ -3,6 +3,7 @@
 // today's news and are never pushed. Unknown sources are created isolated, awaiting an operator.
 import { sql } from "../db.ts";
 import { upsertMaterial } from "../content/materials.ts";
+import { isBeforeIngestFloor } from "../content/floor.ts";
 import { queueProcessing } from "../jobs/content.ts";
 import { readPublicationDate } from "../sources/dates.ts";
 import { normalizeUrl } from "../lib/url.ts";
@@ -50,6 +51,7 @@ export async function ingestItems(body: { sourceId?: unknown; sourceName?: unkno
     if (!url || seen.has(url)) continue;
     seen.add(url);
     const publication = readPublicationDate(typeof it.publishedAt === "string" ? it.publishedAt : null, "+00:00");
+    if (isBeforeIngestFloor(publication.publishedAt)) continue;
     const flags = it.raw?._aihot ?? {};
     const res = await upsertMaterial({
       sourceId: source!.id,
