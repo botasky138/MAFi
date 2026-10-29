@@ -6,6 +6,14 @@
 
 ---
 
+## 2026-10-29（Asia/Tokyo ~22:55）精选出现 2025 旧闻：发布时间硬下限 2026-10-01 00:00 +08
+
+- **根因**：不是解析错日期（cnpharm/deepseek/vllm 日期均与原页一致，抽查 cnpharm 3 篇页面日期=库内日期）。首轮导入（backfill=first-import）的旧稿在 publish.ts 中被以 discovered_at（抓取时间）提升 sort_at，跨过 10-23 列表底；scripts/_restore-selected-floor.mjs 又按 sort_at 把 AI 源近阈稿补进精选。另：发布 INSERT 写的是原始 selected 而非受底线约束后的 ffectiveSelected，导致底线判断未真正落库。
+- **来源（mafi_test，实际被预览使用的库）**：web-cnpharm-device-policy 8 条（2025-12-04～2026-07-09，栏目首页为历史专题，4 条进精选）、web-deepseek-updates 6（含 2025-12-01 V3.2，6 条进精选）、json-vllm-releases 6（2 条进精选）、web-csrc-market 4、web-nhsa-news 1（进精选）、rss-github-ai 1；web-stcn-news 6 条无日期（未进精选）。
+- **代码**：新增 content/floor.ts（MAFI_INGEST_PUBLISHED_FLOOR，默认 2026-10-01T00:00:00+08:00）；collect/ingest/mp 入库前拒绝早于底线的有日期条目；publish：无真实发布日期或早于底线不再用抓取时间提升、不得入精选，INSERT 改用 next.selected/reason/visible_after；scope：listingFresh/selected/seated 条件增加 published_at IS NOT NULL AND >= floor（10-23 列表底保留）。本地 _restore-selected-floor.mjs 也加了同一条件。测试：新增 published-floor.standalone；历史日期用例通过 	ests/legacy-floor.ts 放宽底线；timeline fixture 补 published_at。相关 15 个测试文件 99/99 通过，typecheck 通过。
+- **清理**：先备份 .data/backups/published-floor-20261029-223812/（mafi_test.dump、mafi_preview_20261021.dump，pg_dump -Fc）；用 scripts/published-floor-cleanup.mjs 走 setVisibility→withdrawn（软删除，同步 ledger），mafi_test 26 条（其中精选 13），mafi_preview_20261021 31 条（精选 12）。
+- **验证**：重启 preview + auto-loop；/api/v1/items selected 22 条、all 100 条、snapshot、/feed.xml、/feed/all.xml 早于底线=0，精选最早 2026-10-05；DB 精选无日期/旧稿=0。
+- **提交**：608e8ec
 ## 2026-10-29（Asia/Tokyo ~21:30）NMPA「为什么今天才不行」复盘 + 切换转载源（中国医药报）
 
 - **复盘**：本库 sources/articles 于今天 20:45 重新初始化，无历史；以 `.data/logs/collect-*.log` 为准。10-23～10-28 nmpa 两源每天几十次 ok（found=20），走的是旧兜底 `curl.exe --noproxy *`（undici 先 412，curl 再成功），间歇性 schannel TLS 失败（curl 35）。最后一次 ok 为 10-29 00:48 JST；00:58 起变为 "Blocked private address"（fake-ip 198.18），之后 curl 兜底失败、5a1515e 删除兜底后为 412。即：之前确实可用（非静默失败），只是带不少失败。
