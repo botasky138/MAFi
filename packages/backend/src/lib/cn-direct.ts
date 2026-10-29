@@ -3,8 +3,10 @@
 // physical NIC) so the socket bypasses the TUN. Names are resolved over DNS-over-HTTPS from the same
 // local address (the system resolver would hand out fake 198.18/15 answers), every answer is checked
 // with isBlockedAddress, and TLS keeps the original host name for SNI and certificate validation.
-// Enabled only when MAFI_CN_DIRECT_LOCAL_ADDRESS is set; everything else keeps its normal route.
+// MAFI_CN_DIRECT_LOCAL_ADDRESS: an explicit IPv4 overrides; "auto" (the default when unset) picks the
+// physical NIC's IPv4 at runtime (pickLocalAddress) so DHCP changes don't break it; "off" disables.
 import net from "node:net";
+import os from "node:os";
 import { Agent, request, type Dispatcher } from "undici";
 import { isBlockedAddress } from "./url.ts";
 
@@ -15,6 +17,39 @@ export function isCnDirectHost(host: string): boolean {
   const h = host.replace(/^\[|\]$/g, "").toLowerCase().replace(/\.$/, "");
   if (net.isIP(h) !== 0) return false;
   return h.endsWith(".cn") || CN_DIRECT_SUFFIXES.some((s) => h === s || h.endsWith(`.${s}`));
+}
+
+type Iface = { address: string; family: string | number; internal: boolean };
+
+const VIRTUAL_IFACE = /flclash|meta|tun|wintun|tap|vethernet|vmware|virtualbox|vbox|loopback|docker|wsl|hyper-v|tailscale|zerotier|bluetooth|蓝牙|npcap|utun|bridge|br-|veth/i;
+const WIFI_IFACE = /wlan|wi-?fi|wireless|无线|^wl/i;
+const ETHERNET_IFACE = /ethernet|以太网|^eth|^en/i;
+
+function usableIpv4(a: Iface): boolean {
+  if (a.internal || (a.family !== "IPv4" && a.family !== 4) || net.isIP(a.address) !== 4) return false;
+  const [x, y] = a.address.split(".").map(Number) as [number, number];
+  if (x === 127 || x === 0 || (x === 169 && y === 254) || (x === 198 && (y === 18 || y === 19))) return false;
+  return true;
+}
+
+/** The physical NIC's IPv4: Wi-Fi first, then Ethernet, then any other non-virtual adapter; null if none. */
+export function pickLocalAddress(ifaces: NodeJS.Dict<Iface[]> = os.networkInterfaces()): { name: string; address: string } | null {
+  const candidates: Array<{ name: string; address: string; rank: number }> = [];
+  for (const [name, list] of Object.entries(ifaces)) {
+    if (!list || VIRTUAL_IFACE.test(name)) continue;
+    const rank = WIFI_IFACE.test(name) ? 0 : ETHERNET_IFACE.test(name) ? 1 : 2;
+    for (const a of list) if (usableIpv4(a)) candidates.push({ name, address: a.address, rank });
+  }
+  candidates.sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name));
+  return candidates[0] ? { name: candidates[0].name, address: candidates[0].address } : null;
+}
+
+/** Connect errors that mean the bound local address is stale (DHCP change, adapter down). */
+export function isStaleLocalAddressError(err: unknown): boolean {
+  for (let e = err as { code?: string; cause?: unknown } | undefined, i = 0; e && i < 5; e = e.cause as typeof e, i++) {
+    if (e.code && ["EADDRNOTAVAIL", "ENETUNREACH", "EHOSTUNREACH", "EINVAL", "ENETDOWN"].includes(e.code)) return true;
+  }
+  return false;
 }
 
 type DohAnswer = { type: number; data: string; TTL?: number };

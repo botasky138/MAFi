@@ -5,7 +5,7 @@ import { Agent, Pool, ProxyAgent, fetch as undiciFetch, type Dispatcher } from "
 import { config } from "../config.ts";
 import { assertPublicUrl, guardedLookup } from "./url.ts";
 import { createEgressProxy, createEgressResolver, OUTBOUND_HTTP_OPTIONS } from "./egress-proxy.ts";
-import { createCnDirect, isCnDirectHost } from "./cn-direct.ts";
+import { createCnDirect, isCnDirectHost, isStaleLocalAddressError, pickLocalAddress } from "./cn-direct.ts";
 import { DEPLOYMENT, SITE } from "@aihot/site";
 
 /**
@@ -30,13 +30,37 @@ function egressResolver() {
   return resolveEgress ??= createEgressResolver(config.egressProxyUrl!);
 }
 
-let cnDirectState: ReturnType<typeof createCnDirect> | null = null;
+let cnDirectState: (ReturnType<typeof createCnDirect> & { localAddress: string }) | null = null;
+let cnDetected: { address: string | null; until: number } | null = null;
+let cnLogged: string | null = null;
+/** The local address to bind: the explicit override, or the detected physical NIC (cached ~60 s). */
+function cnLocalAddress(): string | null {
+  const configured = config.cnDirectLocalAddress;
+  if (!configured) return null;
+  if (configured !== "auto") return configured;
+  if (!cnDetected || cnDetected.until <= Date.now()) {
+    const picked = pickLocalAddress();
+    cnDetected = { address: picked?.address ?? null, until: Date.now() + 60_000 };
+    const label = picked ? `${picked.address} (${picked.name})` : "none";
+    if (label !== cnLogged) { cnLogged = label; console.info(`[cn-direct] auto local address: ${label}`); }
+  }
+  return cnDetected.address;
+}
 function cnDirectRoute() {
-  return cnDirectState ??= createCnDirect(config.cnDirectLocalAddress!, config.cnDohUrl, OUTBOUND_HTTP_OPTIONS, destinationPool);
+  const localAddress = cnLocalAddress()!;
+  if (cnDirectState?.localAddress !== localAddress) {
+    void cnDirectState?.agent.close().catch(() => {});
+    cnDirectState = { ...createCnDirect(localAddress, config.cnDohUrl, OUTBOUND_HTTP_OPTIONS, destinationPool), localAddress };
+  }
+  return cnDirectState;
+}
+/** A stale bound address (DHCP change): drop the cache so the next request re-detects and rebuilds the Agent. */
+function invalidateCnDirect(err: unknown) {
+  if (config.cnDirectLocalAddress === "auto" && isStaleLocalAddressError(err)) cnDetected = null;
 }
 /** Chinese sources dialled from MAFI_CN_DIRECT_LOCAL_ADDRESS with DoH answers (cn-direct.ts). */
 function cnDirect(url: URL, route: EgressRoute, privateHosts: readonly string[]): boolean {
-  if (route !== "egress" || !config.cnDirectLocalAddress) return false;
+  if (route !== "egress" || !cnLocalAddress()) return false;
   const host = hostOf(url);
   return !privateHosts.includes(host) && isCnDirectHost(host);
 }
@@ -149,14 +173,15 @@ export async function guardedFetch(input: string, opts: GuardedFetchOptions = {}
   let method = (opts.method ?? "GET").toUpperCase();
   let requestBody = opts.body;
   for (let hop = 0; ; hop++) {
+    const viaCn = cnDirect(url, route, privateHosts);
     const res = await undiciFetch(url, {
       method,
       headers: Object.fromEntries(headers),
       body: requestBody,
       redirect: "manual",
-      dispatcher: cnDirect(url, route, privateHosts) ? cnDirectRoute().agent : dispatcherFor(proxied(url, route, privateHosts), privateHosts.includes(hostOf(url))),
+      dispatcher: viaCn ? cnDirectRoute().agent : dispatcherFor(proxied(url, route, privateHosts), privateHosts.includes(hostOf(url))),
       signal,
-    });
+    }).catch((err: unknown) => { if (viaCn) invalidateCnDirect(err); throw err; });
     if ([301, 302, 303, 307, 308].includes(res.status) && res.headers.get("location")) {
       // Release the connection even when the next URL is refused or the redirect limit is reached.
       await res.body?.cancel();
