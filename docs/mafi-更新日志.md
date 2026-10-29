@@ -6,6 +6,11 @@
 
 ---
 
+## 2026-10-29（Asia/Tokyo ~21:20）NMPA 412 诊断：瑞数 JS 挑战，去掉 curl 兜底
+
+- **根因**：nmpa.gov.cn 为瑞数（Ruishu）JS 挑战 WAF，非网络/TUN 问题。经 cn-direct（WLAN 直连、DoH 解析 47.93.95.89）请求列表页得 HTTP 412，正文为 `<meta id=… r='m'>` + `$_ts.nsd/$_ts.cd` 引导脚本；curl 直连（--interface + --resolve）、`/directory/web/nmpa/...` 静态路径、Jina Reader 均同为 412 挑战页。自动化浏览器（Playwright+系统 Edge，经本机仅放行 nmpa 的 CONNECT 转发直连）能执行站点 JS 拿到 `NfBCSins2OywS/NfBCSins2OywT` cookie，但复载列表页返回 400（拒绝自动化浏览器）；`msedge --headless=new --dump-dom` 同样被拒。走 7890/TUN 日本出口连接直接被关闭（ERR_CONNECTION_CLOSED，境外 IP 不可达）。官方无公告 RSS/API（仅 UDI 数据 RSS）。
+- **处理**：按合规要求不破解/绕过挑战。`web-list.ts` 删除 nmpa 的 curl.exe 兜底（TUN 下 TLS 失败，直连也 412），nmpa 412 时直接抛出明确的 FetchError，走共享 fetch 层（cn-direct）。nmpa 源仍为 120 分钟间隔、每次每源 1 个请求。
+- **结果**：collect web-nmpa-devices / web-nmpa-trends 均 failed（found=0），错误信息为 WAF JS challenge。FlClash 未改动，基线 3×200 不变。
 ## 2026-10-29（Asia/Tokyo ~21:00）CN 直连本地地址自动探测（应对 DHCP 变化）
 
 - **做法**：`MAFI_CN_DIRECT_LOCAL_ADDRESS` 支持 `auto`（未设置时默认 auto；显式 IPv4 仍为覆盖值；`off` 关闭）。`cn-direct.ts` 新增 `pickLocalAddress()`：用 `os.networkInterfaces()` 选物理网卡 IPv4，跳过 internal、169.254、198.18/15 及 FlClash/Meta/TUN/Wintun/vEthernet/VMware/VirtualBox/Loopback/docker/WSL/Tailscale/蓝牙 等虚拟网卡；优先 WLAN/Wi-Fi/无线，其次 Ethernet/以太网。`http-fetch.ts` 缓存探测结果 60 s，地址变化时重建 Agent；连接报 EADDRNOTAVAIL/ENETUNREACH 等时清缓存重新探测。选中地址首次以 info 打印 `[cn-direct] auto local address: …`。
