@@ -1,9 +1,18 @@
+import fs_pin from "node:fs";
 function requirePreviewDatabaseUrl(value) {
   if (!value) throw new Error("Set PREVIEW_DATABASE_URL before running this helper");
   const parsed = new URL(value);
   if (!["postgres:", "postgresql:"].includes(parsed.protocol)) throw new Error("PREVIEW_DATABASE_URL must use PostgreSQL");
   const database = decodeURIComponent(parsed.pathname.slice(1));
   if (!/(?:^|[_-])preview(?:[_-]|$)|(?:_test|_ci)$/i.test(database)) throw new Error("Use a dedicated preview, _test or _ci database");
+  // Pin (2026-10-30): refuse to run against any DB other than the pinned preview DB (no silent drift).
+  {
+    let pin = process.env.MAFI_PREVIEW_DB;
+    if (!pin) { try { const m = fs_pin.readFileSync(".env", "utf8").match(/^MAFI_PREVIEW_DB=(.+)$/m); if (m) pin = m[1].trim().replace(/^["']|["']$/g, ""); } catch {} }
+    pin ||= "mafi_preview_20261021";
+    if (pin && database !== pin) throw new Error(`Preview DB drift: PREVIEW_DATABASE_URL points at "${database}" but MAFI_PREVIEW_DB pins "${pin}"`);
+    console.error(`[mafi] preview database: ${database}${pin ? " (pinned)" : " (UNPINNED)"}`);
+  }
   return value;
 }
 import fs from "node:fs";
@@ -40,7 +49,8 @@ if (!dbName) throw new Error("DATABASE_URL must name the preview database");
 const adminUrl = new URL(dbUrl); adminUrl.pathname = "/postgres";
 const sql = postgres(adminUrl.toString(), { max: 1 });
 if (!(await sql`SELECT 1 FROM pg_database WHERE datname=${dbName}`).length) {
-  await sql`CREATE DATABASE ${sql(dbName)}`;
+  await sql.end();
+  throw new Error(`Preview database "${dbName}" does not exist; refusing to create a fresh one (2026-10-30 drift guard)`);
 }
 await sql.end();
 
