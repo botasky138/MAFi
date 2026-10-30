@@ -220,8 +220,10 @@ export async function guardedFetch(input: string, opts: GuardedFetchOptions = {}
       : await send(dispatcherFor(viaProxy, privateHost)).catch(async (error: unknown) => {
         // Only a direct connection has a curve of its own to change, and only while the budget lasts:
         // a retry on an aborted signal fails the same way and hides the original error. The CN-direct
-        // route keeps its own fallback (invalidateCnDirect) and is not retried here.
-        const pinned = viaProxy || privateHost || signal.aborted || !brokenHandshake(error) ? undefined : pinnedCurveAgent();
+        // route keeps its own fallback (invalidateCnDirect) and is not retried here; EPROTO can also
+        // come after the request went out, so only GET and HEAD are replayed: a paid POST would be billed twice.
+        const replayable = method === "GET" || method === "HEAD";
+        const pinned = viaProxy || privateHost || !replayable || signal.aborted || !brokenHandshake(error) ? undefined : pinnedCurveAgent();
         if (!pinned) throw error;
         return send(pinned);
       });
