@@ -24,6 +24,7 @@ export type EgressRoute = "egress" | "direct";
 let proxyAgent: ProxyAgent | null = null;
 let directAgent: Agent | null = null;
 let privateFeedAgent: Agent | null = null;
+let pinnedCurve: Agent | null = null;
 let resolveEgress: ReturnType<typeof createEgressResolver> | null = null;
 
 function egressResolver() {
@@ -97,6 +98,36 @@ function dispatcherFor(viaProxy: boolean, privateHost: boolean): Dispatcher | un
   // Direct connections resolve through the guarded lookup: the address actually dialled is checked.
   directAgent ??= new Agent({ ...OUTBOUND_HTTP_OPTIONS, connect: { lookup: guardedLookup as never }, factory: destinationPool });
   return directAgent;
+}
+
+/**
+ * Some government TLS stacks answer Node's preferred X25519 key share with a point OpenSSL refuses
+ * (ERR_SSL_BAD_ECPOINT, e.g. mzt.hunan.gov.cn): the page loads in a browser and in curl, and with
+ * the curve pinned to P-256. Node's "auto" curve list starts with X25519, so the same request is
+ * retried once on an agent that offers only P-256. Every browser still negotiates P-256, so pinning
+ * loses nothing.
+ */
+function pinnedCurveAgent(): Agent | undefined {
+  // With the private-network allowance on, requests already use undici's default agents and no
+  // address check runs; pinning a curve would silently re-introduce the check for those hosts.
+  if (config.allowPrivateNetworkFetch) return undefined;
+  pinnedCurve ??= new Agent({ ...OUTBOUND_HTTP_OPTIONS, connect: { lookup: guardedLookup as never, ecdhCurve: "prime256v1" }, factory: destinationPool });
+  return pinnedCurve;
+}
+
+/**
+ * The handshake error codes a curve change can fix, read off the cause chain undici wraps them in.
+ * EPROTO is the same symptom reported under another name by some undici versions and by servers
+ * that answer the key share with an alert rather than a bad point.
+ */
+function brokenHandshake(error: unknown): boolean {
+  let cause: unknown = error;
+  for (let depth = 0; depth < 4 && cause; depth++) {
+    const code = (cause as { code?: string }).code;
+    if (code === "ERR_SSL_BAD_ECPOINT" || code === "EPROTO") return true;
+    cause = (cause as { cause?: unknown }).cause;
+  }
+  return false;
 }
 
 export interface GuardedFetchOptions {
@@ -174,14 +205,26 @@ export async function guardedFetch(input: string, opts: GuardedFetchOptions = {}
   let requestBody = opts.body;
   for (let hop = 0; ; hop++) {
     const viaCn = cnDirect(url, route, privateHosts);
-    const res = await undiciFetch(url, {
+    const viaProxy = proxied(url, route, privateHosts);
+    const privateHost = privateHosts.includes(hostOf(url));
+    const send = (dispatcher: Dispatcher | undefined) => undiciFetch(url, {
       method,
       headers: Object.fromEntries(headers),
       body: requestBody,
       redirect: "manual",
-      dispatcher: viaCn ? cnDirectRoute().agent : dispatcherFor(proxied(url, route, privateHosts), privateHosts.includes(hostOf(url))),
+      dispatcher,
       signal,
-    }).catch((err: unknown) => { if (viaCn) invalidateCnDirect(err); throw err; });
+    });
+    const res = viaCn
+      ? await send(cnDirectRoute().agent).catch((err: unknown) => { invalidateCnDirect(err); throw err; })
+      : await send(dispatcherFor(viaProxy, privateHost)).catch(async (error: unknown) => {
+        // Only a direct connection has a curve of its own to change, and only while the budget lasts:
+        // a retry on an aborted signal fails the same way and hides the original error. The CN-direct
+        // route keeps its own fallback (invalidateCnDirect) and is not retried here.
+        const pinned = viaProxy || privateHost || signal.aborted || !brokenHandshake(error) ? undefined : pinnedCurveAgent();
+        if (!pinned) throw error;
+        return send(pinned);
+      });
     if ([301, 302, 303, 307, 308].includes(res.status) && res.headers.get("location")) {
       // Release the connection even when the next URL is refused or the redirect limit is reached.
       await res.body?.cancel();
