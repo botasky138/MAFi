@@ -1,4 +1,10 @@
 # MAFi 更新日志
+## 2026-10-30 11:14 热点/报告“无历史数据”排查与恢复
+
+- 根因：非发布日期地板（608e8ec）导致。hot.ts / reports.ts 未引用 published_at 地板；mafi_test 于 2026-10-29 19:45（北京）新建，之前的报告/热点历史全在 mafi_preview_20261021（22:38 备份中 mafi_test 已是 0 份报告、热点全空）。
+- 恢复：先备份 .data/backups/hot-report-restore-*（两库 pg_dump -Fc），再从 mafi_preview_20261021 按 generated_at >= 2026-10-01+08 导入 7 份报告（日报 10-24~10-29、周报 W43），ON CONFLICT DO NOTHING，未整库覆盖、未取消任何文章撤回。
+- 热点：当前为空系 mafi_test 信号量少（67 条）所致；旧库热点快照的 story 不存在于 mafi_test，未导入。
+- 新增回归测试 tests/hot-report-floor.standalone.test.ts。
 
 本文件记录每次对话/会话对 MAFi 仓库的可见改动，便于对照提交与回滚。  
 **约定**：最新日期在上；同日内按完成先后可分子节；注明关键 commit SHA；本机试运行、默认不 push。  
