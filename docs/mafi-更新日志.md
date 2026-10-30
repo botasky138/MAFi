@@ -1,4 +1,11 @@
 # MAFi 更新日志
+## 2026-10-30 11:25 预览切回 mafi_preview_20261021 并固定库名（c7add71）
+
+- 漂移根因：.env 不含 PREVIEW_DATABASE_URL，预览/auto-loop 的库完全取决于启动会话的环境变量；10-29 19:45 左右重启时会话 URL 指向 mafi_test（测试库，名称同样通过 _test 校验），而 start-mafi-preview 会静默接受甚至自动 CREATE 库，故无报错地切到了新库。
+- 固定：.env 增加 MAFI_PREVIEW_DB=mafi_preview_20261021（脚本内默认同值）；start-mafi-preview / mafi-auto-loop / collect-* / analyze-mafi-auto / seed 启动时打印库名，库名不符直接报错；库不存在时拒绝自动创建。
+- 备份：.data/backups/switch-to-preview-db-20261030-111612/（两库 pg_dump -Fc）。
+- 合并（mafi_test → 旧库，按 identity_key/url/id 去重，跳过发布日 < 2026-10-01 及已撤回）：78 篇文章及其 analyses 99、discoveries 78、revisions 154、pool_search 62；sources 30 行 upsert（含 cnpharm 两源、nmpa 停用）；文章 grouping 重置为 pending 由旧库重新成组，63 篇已成组发布（15 篇 blocked 同原状态）；日报 2026-10-30 1 份。
+- 校验：floor cleanup 0 撤回、精选早于底线 0；热点 1、日报 7（10-24~10-30）+ 周报 W43、精选 45（DB）；报告引用 11 条全部 200。删除临时库 bk_floor_check。
 ## 2026-10-30 11:14 热点/报告“无历史数据”排查与恢复
 
 - 根因：非发布日期地板（608e8ec）导致。hot.ts / reports.ts 未引用 published_at 地板；mafi_test 于 2026-10-29 19:45（北京）新建，之前的报告/热点历史全在 mafi_preview_20261021（22:38 备份中 mafi_test 已是 0 份报告、热点全空）。
