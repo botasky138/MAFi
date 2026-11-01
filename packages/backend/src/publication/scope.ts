@@ -21,11 +21,13 @@ export function listingDayFloor(_now: Date = new Date()): Date {
 export const LISTING_FLOOR_BEIJING_DATE = "2026-10-23" as const;
 
 /**
- * Home /all /hot /daily freshness: items whose list time (sort_at) is on/after LISTING_FLOOR_BEIJING_DATE.
+ * 精选/动态 freshness: items whose publish time (published_at) is on/after LISTING_FLOOR_BEIJING_DATE.
  * Older rows stay in DB and on detail/archive routes; these four surfaces do not resurface them.
  */
 export function listingFreshCondition(now: Date) {
-  return sql`p.sort_at >= ${listingDayFloor(now)} AND ${publishedFloorCondition()}`;
+  // Display floor is on the real publish time (2026-10-23 Beijing); rows without published_at are
+  // excluded (crawl/list time is never a publish time). The 10-01 ingest floor still applies.
+  return sql`p.published_at >= ${listingDayFloor(now)} AND ${publishedFloorCondition()}`;
 }
 
 /** Real publish date present and on/after MAFI_INGEST_PUBLISHED_FLOOR (no fetch-time fallback). */
