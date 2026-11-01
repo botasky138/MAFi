@@ -1,6 +1,7 @@
 // Global per-source quota multipliers from reader votes (docs/mafi-source-quota-design.md).
 // Votes never reorder anything; they only scale how many 精选 items a source may show per day.
 import { sql, type Db } from "@aihot/backend/db";
+import { invalidateSelectedSourceQuota } from "@aihot/backend/publication/timeline";
 
 export const QUOTA_HALF_LIFE_DAYS = 30;
 export const QUOTA_PRIOR_UP = 2;
@@ -38,7 +39,7 @@ export async function readSourceVoteMass(db: Db = sql): Promise<SourceVoteMass[]
 let cache: { at: number; value: Map<string, number> } | null = null;
 const CACHE_MS = 60_000;
 
-export function invalidateSourceQuota(): void { cache = null; }
+export function invalidateSourceQuota(): void { cache = null; invalidateSelectedSourceQuota(); }
 
 export async function sourceQuotaMultipliers(): Promise<Map<string, number>> {
   if (cache && Date.now() - cache.at < CACHE_MS) return cache.value;

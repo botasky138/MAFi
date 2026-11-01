@@ -21,6 +21,7 @@ export interface TimelineQuery extends TimelineFilters {
 interface GroupRow {
   gk: string;
   anchor_at: Date;
+  ids: readonly string[];
 }
 
 function filterSql(q: TimelineQuery) {
@@ -49,7 +50,10 @@ async function groupPool(q: TimelineQuery, now: Date, factIds: number[]) {
  * first. Every timeline page and its day counts read this list; it is kept for five seconds per
  * filter scope (a newly selected report appears at most that much later).
  */
-const groupedAnchors = cachedByKey(binding, (q: TimelineQuery) => queryGroupedAnchors(q, new Date()), { freshMs: 5000, maxStaleMs: 5000, maxKeys: 50 });
+// The quota epoch is part of the key so a vote (which changes quotas) invalidates the cached list at once.
+let quotaEpoch = 0;
+export function invalidateSelectedSourceQuota(): void { quotaEpoch++; }
+const groupedAnchors = cachedByKey((q: TimelineQuery) => `${binding(q)}|${quotaEpoch}`, (q: TimelineQuery) => queryGroupedAnchors(q, new Date()), { freshMs: 5000, maxStaleMs: 5000, maxKeys: 50 });
 
 /**
  * Per-source 精选 quota (docs/mafi-source-quota-design.md). A module (mafi-preferences) may supply a
@@ -84,7 +88,7 @@ async function quotaArrays(): Promise<{ base: number; ids: string[]; quotas: num
 export async function queryGroupedAnchors(q: TimelineQuery, now: Date) {
   const { base, ids, quotas } = await quotaArrays();
   const rows = (
-    await sql<{ gk: string; anchor_at: Date }[]>`
+    await sql<{ gk: string; anchor_at: Date; ids: string[] }[]>`
       WITH base AS MATERIALIZED (
         SELECT p.published_at, p.source_id, p.score, p.article_id,
           CASE WHEN p.fact_id IS NOT NULL AND ${ownFactEvidenceCondition()} AND ${foldableSelectionCondition()}
@@ -101,10 +105,10 @@ export async function queryGroupedAnchors(q: TimelineQuery, now: Date) {
           ) AS rn
         FROM base b LEFT JOIN quota qt ON qt.source_id = b.source_id
       )
-      SELECT gk, min(published_at) AS anchor_at FROM ranked
+      SELECT gk, min(published_at) AS anchor_at, array_agg(article_id) AS ids FROM ranked
       WHERE ${base > 0 ? sql`rn <= quota` : sql`true`}
       GROUP BY gk ORDER BY anchor_at DESC NULLS LAST, gk COLLATE "C" DESC`
-  ).map((r) => ({ gk: r.gk, anchor: r.anchor_at.getTime() }));
+  ).map((r) => ({ gk: r.gk, anchor: r.anchor_at.getTime(), ids: r.ids }));
   return rows;
 }
 
@@ -142,7 +146,7 @@ export async function loadTimeline(q: TimelineQuery): Promise<Omit<TimelineRespo
   // A given clock (tests, replays) reads afresh.
   const grouped = q.now ? await queryGroupedAnchors(q, now) : await groupedAnchors(q);
   const start = after ? grouped.findIndex((g) => g.anchor < after!.a || (g.anchor === after!.a && g.gk < after!.g)) : 0;
-  const groups: GroupRow[] = (start < 0 ? [] : grouped.slice(start, start + limit + 1)).map((g) => ({ gk: g.gk, anchor_at: new Date(g.anchor) }));
+  const groups: GroupRow[] = (start < 0 ? [] : grouped.slice(start, start + limit + 1)).map((g) => ({ gk: g.gk, anchor_at: new Date(g.anchor), ids: g.ids }));
 
   const page = groups.slice(0, limit);
   const hasMore = groups.length > limit;
@@ -172,7 +176,10 @@ export async function loadTimeline(q: TimelineQuery): Promise<Omit<TimelineRespo
       continue;
     }
     const factId = Number(g.gk.slice(1));
-    const candidates = members.filter((m) => m.fact_id === factId);
+    // Only reports kept by the per-source quota may represent the card (an over-quota source must not
+    // reappear as a fact card's display item).
+    const kept = new Set(g.ids);
+    const candidates = members.filter((m) => m.fact_id === factId && kept.has(m.id));
     if (!candidates.length) continue;
     const rep = pickRepresentative(candidates);
     const reports = pool.filter((r) => r.fact_id === factId);
