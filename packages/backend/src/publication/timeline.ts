@@ -1,5 +1,5 @@
 // Selected news timeline: ordinary reports fold by fact; standalone and independent-source articles
-// keep their own cards. Each ordinary fact stays at its first appearance.
+// keep their own cards. Cards are ordered by publish time (a fact by its earliest selected report), newest first.
 import type { GroupInfo, TimelineCard, TimelineFilters, TimelineResponse } from "@aihot/contracts/site";
 import { beijingDate, beijingMidnight } from "@aihot/contracts/time";
 import { sql } from "../db.ts";
@@ -51,16 +51,59 @@ async function groupPool(q: TimelineQuery, now: Date, factIds: number[]) {
  */
 const groupedAnchors = cachedByKey(binding, (q: TimelineQuery) => queryGroupedAnchors(q, new Date()), { freshMs: 5000, maxStaleMs: 5000, maxKeys: 50 });
 
-async function queryGroupedAnchors(q: TimelineQuery, now: Date) {
+/**
+ * Per-source 精选 quota (docs/mafi-source-quota-design.md). A module (mafi-preferences) may supply a
+ * multiplier per source (bounded 0.5x–2x from reader votes); the engine never imports it. Each source
+ * shows at most max(1, round(base × multiplier)) selected items per Beijing day, best score first.
+ * The quota decides which items appear; it never changes their order (publish time, newest first).
+ */
+export type SourceQuotaProvider = () => Promise<ReadonlyMap<string, number>>;
+let sourceQuotaProvider: SourceQuotaProvider | null = null;
+export function setSelectedSourceQuotaProvider(provider: SourceQuotaProvider | null): void { sourceQuotaProvider = provider; }
+
+export function selectedSourceDailyBase(): number {
+  const raw = Number(process.env.MAFI_SELECTED_SOURCE_DAILY_QUOTA ?? 2);
+  return Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : 2;
+}
+
+export function sourceQuota(base: number, multiplier: number | undefined): number {
+  const m = Math.min(2, Math.max(0.5, Number.isFinite(multiplier) ? multiplier! : 1));
+  return Math.max(1, Math.round(base * m));
+}
+
+async function quotaArrays(): Promise<{ base: number; ids: string[]; quotas: number[] }> {
+  const base = selectedSourceDailyBase();
+  let multipliers: ReadonlyMap<string, number> = new Map();
+  if (base > 0 && sourceQuotaProvider) {
+    try { multipliers = await sourceQuotaProvider(); } catch { multipliers = new Map(); }
+  }
+  const ids = [...multipliers.keys()];
+  return { base, ids, quotas: ids.map((id) => sourceQuota(base, multipliers.get(id))) };
+}
+
+export async function queryGroupedAnchors(q: TimelineQuery, now: Date) {
+  const { base, ids, quotas } = await quotaArrays();
   const rows = (
     await sql<{ gk: string; anchor_at: Date }[]>`
       WITH base AS MATERIALIZED (
-        SELECT p.sort_at, CASE WHEN p.fact_id IS NOT NULL AND ${ownFactEvidenceCondition()} AND ${foldableSelectionCondition()}
+        SELECT p.published_at, p.source_id, p.score, p.article_id,
+          CASE WHEN p.fact_id IS NOT NULL AND ${ownFactEvidenceCondition()} AND ${foldableSelectionCondition()}
           THEN 'f' || p.fact_id::text ELSE 'a' || p.article_id END AS gk
         FROM publications p
         WHERE ${selectedCondition(now)} AND ${listingFreshCondition(now)} ${filterSql(q)}
+      ),
+      quota AS (SELECT * FROM unnest(${ids}::text[], ${quotas}::int[]) AS t(source_id, quota)),
+      ranked AS (
+        SELECT b.*, coalesce(qt.quota, ${Math.max(1, base)}::int) AS quota,
+          row_number() OVER (
+            PARTITION BY b.source_id, (b.published_at AT TIME ZONE 'Asia/Shanghai')::date
+            ORDER BY b.score DESC NULLS LAST, b.published_at DESC, b.article_id DESC
+          ) AS rn
+        FROM base b LEFT JOIN quota qt ON qt.source_id = b.source_id
       )
-      SELECT gk, min(sort_at) AS anchor_at FROM base GROUP BY gk ORDER BY anchor_at DESC, gk COLLATE "C" DESC`
+      SELECT gk, min(published_at) AS anchor_at FROM ranked
+      WHERE ${base > 0 ? sql`rn <= quota` : sql`true`}
+      GROUP BY gk ORDER BY anchor_at DESC NULLS LAST, gk COLLATE "C" DESC`
   ).map((r) => ({ gk: r.gk, anchor: r.anchor_at.getTime() }));
   return rows;
 }

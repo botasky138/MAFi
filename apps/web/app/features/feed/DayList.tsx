@@ -13,7 +13,7 @@ import { FeedItem } from "./FeedItem";
 export function DayList({ items, todayCount = null, headerAside }: { items: FeedItemSummary[]; todayCount?: number | null; headerAside?: React.ReactNode }) {
   const readSet = useReadSet();
   const today = beijingDate(Date.now());
-  const days = useMemo(() => byBeijingDay(items, (it) => it.timelineAt), [items]);
+  const days = useMemo(() => byBeijingDay(items, (it) => it.publishedAt ?? it.timelineAt), [items]);
   return (
     <div>
       {days.map(({ day, entries: list }, i) => (
@@ -21,8 +21,8 @@ export function DayList({ items, todayCount = null, headerAside }: { items: Feed
           <DayHeader day={day} today={today} count={day === today ? todayCount : null} aside={i === 0 ? headerAside : undefined} />
           <ol className="lg:pt-1">
             {list.map((it) => (
-              <TimelineSlot key={it.id} at={it.timelineAt}>
-                <FeedItem item={it} read={readSet.has(it.id)} onOpen={markRead} showTags at={it.timelineAt} />
+              <TimelineSlot key={it.id} at={it.publishedAt ?? it.timelineAt}>
+                <FeedItem item={it} read={readSet.has(it.id)} onOpen={markRead} showTags at={it.publishedAt ?? it.timelineAt} />
               </TimelineSlot>
             ))}
           </ol>

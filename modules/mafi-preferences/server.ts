@@ -3,6 +3,8 @@ import type { HotResponse, PoolResponse, SiteItemDetail, TimelineResponse } from
 import { registerReactionRoutes } from "./backend/http.ts";
 import { readDeviceId } from "./backend/identity.ts";
 import { readSourceCounts, readVotes } from "./backend/store.ts";
+import { setSelectedSourceQuotaProvider } from "@aihot/backend/publication/timeline";
+import { sourceQuotaMultipliers } from "./backend/quota.ts";
 import {
   projectHot,
   projectPool,
@@ -43,6 +45,8 @@ export function createPreferenceServer(): PreferenceServerModule {
         }
       });
       registerReactionRoutes(app);
+      // 👍/👎 scale each source's 精选 quota (global, decayed); they never reorder any list.
+      setSelectedSourceQuotaProvider(sourceQuotaMultipliers);
     },
     async resolveDevice(cookieHeader) {
       const deviceId = readDeviceId(cookieHeader);

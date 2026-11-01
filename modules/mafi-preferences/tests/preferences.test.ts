@@ -177,7 +177,7 @@ async function pickPublicItem(): Promise<{ itemId: string; sourceId: string }> {
   return { itemId, sourceId };
 }
 
-test("projectPool reorders page window and stamps myVote without changing pageCount", async () => {
+test("projectPool keeps engine order and only stamps myVote", async () => {
   const { projectPool } = await import("../backend/views.ts");
   const data = {
     filters: { channel: "all", category: null, tag: null, q: null, tab: "time" },
@@ -200,13 +200,14 @@ test("projectPool reorders page window and stamps myVote without changing pageCo
   const out = projectPool(data, candidates, votes, counts);
   assert.equal(out.pageCount, 3);
   assert.equal(out.total, 80);
-  assert.equal(out.items[0]!.id, "b");
-  assert.equal(out.items[1]!.id, "a");
-  assert.equal(out.items[1]!.myVote, "down");
-  assert.equal(out.items[0]!.myVote, null);
+  assert.deepEqual(out.items.map((i) => i.id), ["a", "b"]);
+  assert.equal(out.items[0]!.myVote, "down");
+  assert.equal(out.items[1]!.myVote, null);
+  const rel = projectPool({ ...data, filters: { ...data.filters, tab: "relevance" } } as typeof data, candidates, votes, counts);
+  assert.deepEqual(rel.items.map((i) => i.id), ["a", "b"]);
 });
 
-test("projectTimeline: downvote demotes item only; group uses max member key", async () => {
+test("projectTimeline keeps publish-time order; votes only stamp", async () => {
   const { projectTimeline } = await import("../backend/views.ts");
   const feed = (id: string) => ({
     id, title: id, summary: null, reason: null, source: { name: "S" }, publishedAt: null,
@@ -231,11 +232,7 @@ test("projectTimeline: downvote demotes item only; group uses max member key", a
   const votes = new Map([["g1-weak", "down" as const]]);
   const counts = new Map([["src", { ups: 0, downs: 1 }]]);
   const out = projectTimeline(data, candidates, votes, counts);
-  assert.equal(out.cards[0]!.item.id, "g1-strong");
-  assert.ok(out.cards.some((c) => c.item.id === "g1-weak"));
-  const ids = out.cards.map((c) => c.item.id);
-  assert.ok(ids.indexOf("g1-strong") < ids.indexOf("g1-weak"));
-  assert.ok(ids.indexOf("g1-strong") < ids.indexOf("g2"));
+  assert.deepEqual(out.cards.map((c) => c.item.id), ["g1-weak", "g1-strong", "g2"]);
   assert.equal(out.cards.find((c) => c.item.id === "g1-weak")!.item.myVote, "down");
   assert.equal(out.cards.find((c) => c.item.id === "g1-strong")!.item.myVote, null);
 });

@@ -1,6 +1,7 @@
 import { sql, type Db } from "@aihot/backend/db";
 import type { ReactionResult, SourceCounts, Vote } from "../contracts.ts";
 import { sourceWeight } from "./weights.ts";
+import { invalidateSourceQuota } from "./quota.ts";
 
 export async function ensureDeviceRow(deviceId: string, db: Db = sql): Promise<void> {
   await db`
@@ -27,6 +28,7 @@ export async function setReaction(deviceId: string, itemId: string, vote: Vote, 
       source_id = EXCLUDED.source_id,
       vote = EXCLUDED.vote,
       updated_at = now()`;
+  invalidateSourceQuota();
   const source = await countsFor(deviceId, sourceId, db);
   return { itemId, myVote: vote, source: { ...source, weight: sourceWeight(source) } };
 }
