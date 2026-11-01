@@ -244,7 +244,11 @@ export async function loadHot(): Promise<HotResponse> {
   const ranking = await latestHotRanking();
   if (!ranking) return { computedAt: null, windowHours: 48, entries: [] };
   const floorMs = listingDayFloor().getTime();
-  const freshHotEntries = ranking.entries.filter((e) => Date.parse(e.latestAt) >= floorMs);
+  // 热点 board order: newest first by the story's latest public report time (publish time, not crawl);
+  // a missing/invalid time sorts last, then the stored heat rank.
+  const latestMs = (e: { latestAt: string }) => { const t = Date.parse(e.latestAt); return Number.isFinite(t) ? t : Number.NEGATIVE_INFINITY; };
+  const freshHotEntries = ranking.entries.filter((e) => Date.parse(e.latestAt) >= floorMs)
+    .sort((a, b) => (latestMs(b) - latestMs(a)) || a.rank - b.rank);
   if (!freshHotEntries.length) return { computedAt: ranking.computedAt, windowHours: 48, entries: [] };
   const freshRanking = { ...ranking, entries: freshHotEntries };
   const at = new Date(ranking.computedAt);
@@ -267,6 +271,7 @@ export async function loadHot(): Promise<HotResponse> {
       const summary = text.summary ? Array.from(text.summary) : null;
       return {
         rank: e.rank,
+        latestAt: new Date(e.latestAt).toISOString(),
         story: { publicId: e.storyPublicId, title: e.title },
         heat: e.heat,
         trend: e.trend,

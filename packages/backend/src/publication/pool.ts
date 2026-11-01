@@ -157,6 +157,7 @@ export function loadPoolReaderWindow(query: PoolQuery): Promise<PoolReaderWindow
 }
 
 type EvidenceRow = ItemRow & { source_id: string; sort_at: Date; rel?: number };
+const timeMs = (d: Date | string | null | undefined) => (d == null ? Number.NEGATIVE_INFINITY : (d instanceof Date ? d : new Date(d)).getTime());
 
 async function queryPoolWindow(query: PoolQuery, now: Date): Promise<PoolReaderWindow> {
   const page = Math.min(Math.max(query.page ?? 1, 1), POOL_MAX_PAGES);
@@ -178,9 +179,9 @@ async function queryPoolWindow(query: PoolQuery, now: Date): Promise<PoolReaderW
       const rows = await db<EvidenceRow[]>`
         WITH page AS (
           SELECT p.article_id FROM publications p WHERE ${listedCondition(now)} AND ${listingFreshCondition(now)} ${filters}
-          ORDER BY p.sort_at DESC, p.article_id DESC LIMIT ${POOL_PAGE_SIZE} OFFSET ${offset})
+          ORDER BY p.published_at DESC NULLS LAST, p.sort_at DESC, p.article_id DESC LIMIT ${POOL_PAGE_SIZE} OFFSET ${offset})
         SELECT ${ITEM_COLUMNS}, p.source_id, p.sort_at ${ITEM_FROM} WHERE p.article_id IN (SELECT article_id FROM page)
-        ORDER BY p.sort_at DESC, p.article_id DESC`;
+        ORDER BY p.published_at DESC NULLS LAST, p.sort_at DESC, p.article_id DESC`;
       // A fixed clock (tests, replays) never shares cached totals.
       return { rows, total: query.now ? await listedCount(query, now) : await poolTotal(query) };
     }
@@ -234,9 +235,9 @@ async function queryPoolWindow(query: PoolQuery, now: Date): Promise<PoolReaderW
     const rows = await db<EvidenceRow[]>`
       WITH page AS (
         SELECT p.article_id FROM publications p WHERE ${listedCondition(now)} AND ${listingFreshCondition(now)} ${filters} ${matchOrSubject(directMatchCondition(terms))}
-        ORDER BY p.sort_at DESC, p.article_id DESC LIMIT ${POOL_PAGE_SIZE} OFFSET ${offset})
+        ORDER BY p.published_at DESC NULLS LAST, p.sort_at DESC, p.article_id DESC LIMIT ${POOL_PAGE_SIZE} OFFSET ${offset})
       SELECT ${ITEM_COLUMNS}, p.source_id, p.sort_at ${ITEM_FROM} WHERE p.article_id IN (SELECT article_id FROM page)
-      ORDER BY p.sort_at DESC, p.article_id DESC`;
+      ORDER BY p.published_at DESC NULLS LAST, p.sort_at DESC, p.article_id DESC`;
     const direct = terms.reduce((acc, t) => sql`${acc} AND ${like(sql`ps.direct`, t)}`, sql``);
     const { n } = one(await db<{ n: number }[]>`
       SELECT count(*) AS n FROM (SELECT 1 FROM pool_search ps JOIN publications p ON p.article_id = ps.article_id
@@ -262,7 +263,8 @@ async function queryPoolWindow(query: PoolQuery, now: Date): Promise<PoolReaderW
     freshness: (meta.updated_at ?? now).toISOString(),
   };
   const candidates: PoolReaderCandidate[] = rows.map((r) => {
-    const sortMs = r.sort_at instanceof Date ? r.sort_at.getTime() : new Date(r.sort_at).getTime();
+    // 动态 lists by publish time (Beijing display); a missing publish time sorts last, never crawl time.
+    const sortMs = timeMs(r.published_at);
     return {
       itemId: r.id,
       sourceId: r.source_id,

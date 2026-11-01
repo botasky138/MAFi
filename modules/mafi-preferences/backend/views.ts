@@ -35,6 +35,8 @@ export function projectPool(
       item: stamp(item, vote),
     });
   }
+  // The time tab is strictly newest-first by publish time (SQL order); votes only stamp, never reorder.
+  if (data.filters.tab !== "relevance") return { ...data, items: data.items.map((i) => stamp(i, votes.get(i.id) ?? undefined)) };
   return { ...data, items: reorderFlat(ranked).map((r) => r.item) };
 }
 
@@ -87,39 +89,11 @@ export function projectTimeline(
 
 export function projectHot(
   data: HotResponse,
-  candidates: readonly ReaderCandidate[],
-  votes: Map<string, Vote>,
-  counts: Map<string, SourceCounts>,
+  _candidates: readonly ReaderCandidate[],
+  _votes: Map<string, Vote>,
+  _counts: Map<string, SourceCounts>,
 ): HotResponse {
-  if (!candidates.length) return data;
-  const ranked: Rankable[] = [];
-  for (const c of candidates) {
-    const vote = votes.get(c.itemId) ?? null;
-    ranked.push({
-      id: c.itemId,
-      groupKey: c.groupKey ?? c.itemId,
-      publicBaseScore: c.publicBaseScore,
-      publicTimeMs: c.publicTimeMs,
-      vote,
-      sourceCounts: counts.get(c.sourceId) ?? { ups: 0, downs: 0 },
-    });
-  }
-  const order = reorderGrouped(ranked);
-  const groupOrder: string[] = [];
-  const seen = new Set<string>();
-  for (const r of order) {
-    const gk = r.groupKey ?? r.id;
-    if (seen.has(gk)) continue;
-    seen.add(gk);
-    groupOrder.push(gk);
-  }
-  const byStory = new Map(data.entries.map((e) => [e.story.publicId, e]));
-  const entries = groupOrder.flatMap((gk) => {
-    const e = byStory.get(gk);
-    return e ? [e] : [];
-  });
-  for (const e of data.entries) {
-    if (!seen.has(e.story.publicId)) entries.push(e);
-  }
-  return { ...data, entries };
+  // 热点 is shown newest-first by each story's latest public report time (loadHot order). Votes used to
+  // multiply epoch timestamps here, which jumbled the board; they no longer reorder it.
+  return data;
 }
