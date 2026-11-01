@@ -1,4 +1,9 @@
 # MAFi 更新日志
+## 2026-11-01 19:55 👍/👎 改为调节来源精选配额，不再影响任何排序（9607e6c）
+- 精选/动态/热点一律按发布时间倒序（含带设备 cookie 的个性化路径）；投票只回显 myVote。
+- 根因：精选锚点用 sort_at，且 `projectTimeline`/`projectPool(relevance)` 用投票权重乘时间戳重排；动态 DayList 显示 timelineAt。
+- 新：每来源每北京日精选配额 = max(1, round(2 × m))，m 由全局投票（30 天半衰期、贝叶斯先验 α=β=2、单设备封顶 5）映射到 0.5x–2x；`MAFI_SELECTED_SOURCE_DAILY_QUOTA`（默认 2，0 关闭）。设计见 docs/mafi-source-quota-design.md。
+- 回滚：`git revert 9607e6c`（无数据迁移）。
 ## 2026-11-01 19:45（北京）热点/动态按时间倒序（9dbac65）
 
 - 根因：① 动态（/api/site/pool）按 `sort_at`（时间线/入库锚点时间）排序而非发布时间，抓取延迟不同的条目会错位（如 14:00 发布却排在 14:40 前）；② mafi-preferences 个性化投影把毫秒时间戳乘以投票/来源权重（0.15~2.25）再排序，带设备 cookie 的读者看到的动态与热点整体乱序；③ 热点按热度 rank 排列，不按时间。
