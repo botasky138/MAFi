@@ -9,7 +9,7 @@
 - 存量重算：只用已存的两次评分（无新模型调用），T2、relevance=pass、未入选且两分之和 ≥ 144 的 7 条：最新 analyses.selected=true、output.threshold=72，并逐条走 publishArticle（席位/配额/ledger 按正常路径）。其中 2 条证券时报无发布时间，按规则不展示。
 - 备份：.data/backups/t2-threshold-72-20261102/（pg_dump -Fc 全库 + analyses-before.json）。
 - 回滚：`git revert <本条提交> 80e8a88`；数据用 analyses-before.json 恢复这 7 行 selected/threshold 后对其 publishArticle，或 pg_restore 全库备份。
-## 2026-11-02 10:30 精选事实卡按最新报道锚定；打开卡片标记整组已读；collect 超时上限（262e836, bdbb245, 84d44ad）
+## 2026-11-02 09:52 精选事实卡按最新报道锚定；打开卡片标记整组已读；collect 超时上限（262e836, bdbb245, 84d44ad）
 - 262e836：queryGroupedAnchors 的分组锚点由 min(published_at) 改为 max(published_at)；游标 tl2 与按日计数都从锚点派生，口径同步。严格倒序、10-23 发布下限、来源配额不变。起因：f245 新增 11-02 07:56 证券时报报道，却仍锚在 10-30 19:41 的首篇。
 - bdbb245：打开卡片调用 markReadMany([代表条目, ...memberIds])，整组写入 aihot-read-items；timeline-unread 新增用例（9/9 通过）。
 - 84d44ad：mafi-auto-loop 给 collect 子进程加超时（MAFI_AUTO_COLLECT_TIMEOUT_MS，默认 8 分钟），超时以 taskkill /T /F 结束整棵进程树，记录 child_timeout_kill，collect_tick_end 带 timedOut。起因：休眠后一次 collect 卡住，09:07 出现 CONNECT_TIMEOUT。
