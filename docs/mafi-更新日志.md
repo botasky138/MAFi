@@ -1,4 +1,9 @@
 # MAFi 更新日志
+## 2026-11-02 10:45 SSR 只转发 mafi_device Cookie（9854db9, a400551）
+- apps/web/app/lib/api.server.ts：loadOr404 不再转发整段 Cookie，只解析并转发 mafi_device（仅限传入 request 的个性化 loader：首页/热榜/条目），admin_session 等其他 Cookie 一律不到 API。
+- 带设备标识的读取在网页侧强制 Cache-Control: private, no-store、X-Accel-Expires: 0、Vary: Cookie；无设备的公共读取保持 public 缓存、无个性化。
+- cache.test.ts：断言只有 mafi_device 可到 API，新增 admin_session 永不转发用例（12/12 通过；旧代码下 2 例失败）。
+- 回滚：`git revert <本条 changelog 提交> a400551 9854db9`，或用 *.bak-20261102c 覆盖后重建 web 并重启预览。
 ## 2026-11-02 10:40 T2 精选阈值 76 → 72（80e8a88）
 - 仅改 industry/selection.ts 的 thresholds.T2；无来源级过滤。
 - 存量重算：只用已存的两次评分（无新模型调用），T2、relevance=pass、未入选且两分之和 ≥ 144 的 7 条：最新 analyses.selected=true、output.threshold=72，并逐条走 publishArticle（席位/配额/ledger 按正常路径）。其中 2 条证券时报无发布时间，按规则不展示。
