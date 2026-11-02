@@ -233,6 +233,19 @@ export function markRead(id: string) {
   });
 }
 
+/** Marks several reports read at once (opening a reading-group card marks every selected report in it). */
+export function markReadMany(idsIn: readonly string[]) {
+  editLocalData(() => {
+    const add = [...new Set(idsIn)].filter((id) => ID_PATTERN.test(id));
+    if (!add.length) return;
+    const ids = getReadIds();
+    if (add.every((id, i) => ids[i] === id)) return;
+    const drop = new Set(add);
+    const next = [...add, ...ids.filter((v) => !drop.has(v))].slice(0, READ_LIMIT);
+    writeRaw(KEYS.read, JSON.stringify(next));
+    invalidate(KEYS.read);
+  });
+}
 // appearance
 export type FontPreference = "browser" | null;
 let unsavedFont: FontPreference | undefined;
