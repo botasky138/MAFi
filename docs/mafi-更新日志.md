@@ -1,4 +1,9 @@
 # MAFi 更新日志
+## 2026-11-02 10:30 精选事实卡按最新报道锚定；打开卡片标记整组已读；collect 超时上限（262e836, bdbb245, 84d44ad）
+- 262e836：queryGroupedAnchors 的分组锚点由 min(published_at) 改为 max(published_at)；游标 tl2 与按日计数都从锚点派生，口径同步。严格倒序、10-23 发布下限、来源配额不变。起因：f245 新增 11-02 07:56 证券时报报道，却仍锚在 10-30 19:41 的首篇。
+- bdbb245：打开卡片调用 markReadMany([代表条目, ...memberIds])，整组写入 aihot-read-items；timeline-unread 新增用例（9/9 通过）。
+- 84d44ad：mafi-auto-loop 给 collect 子进程加超时（MAFI_AUTO_COLLECT_TIMEOUT_MS，默认 8 分钟），超时以 taskkill /T /F 结束整棵进程树，记录 child_timeout_kill，collect_tick_end 带 timedOut。起因：休眠后一次 collect 卡住，09:07 出现 CONNECT_TIMEOUT。
+- 回滚：`git revert <本条 changelog 提交> 84d44ad bdbb245 262e836`，或用 *.bak-20261102 覆盖后重启预览与 auto-loop。
 ## 2026-11-01 20:10 展示下限改按发布时间；精选计数与页面一致；「更新」页（08f0808, ce04526, 425eaa2）
 - 08f0808：精选/动态展示下限改为 published_at ≥ 2026-10-23 北京时间（原为 sort_at）；无发布时间的条目不展示（抓取时间不是发布时间）。10-01 入库下限不变；热点/报告沿用自己的日期窗口（遵守 5313b48 测试）。
 - ce04526：精选计数不一致的根因：①事实卡片的代表条目从全部组员中挑选，可能选中已超配额来源的报道，使该来源在页面上“多出”一张卡；②旧的核对脚本只数独立卡、页面则数所有卡的显示条目，口径不同；③精选分组列表有 5 秒缓存，投票后不失效。修复：代表条目只从配额内保留的条目中选；投票时提升配额版本号，使分组缓存立即失效。在线测试每一步页面数 == 引擎数。
