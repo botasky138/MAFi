@@ -87,6 +87,23 @@ docker compose run --rm setup && docker compose up -d
 
 下面按时间从新到旧列出每次更新要注意的事。
 
+#### GitHub 趋势专页与 Tibo 默认暂停（2026-11-07）
+
+没有数据库迁移，不删除已有缓存。新增两个开关，都只有小写 `true` 才打开，模板里是 `false`：
+
+- `MAFI_CODEX_RESET_ENABLED`：恢复 Tibo 上游拉取，并在侧栏和「我的」显示入口。不是 `true` 时页面还在，但不请求上游、不改写 `codex-resets.json`。AA 模型榜不看这个变量。
+- `MAFI_GITHUB_TREND_ENABLED`：注册每 30 分钟检查一次的定时任务（今日 30 分钟、本周 2 小时、本月 6 小时才真正抓取），并允许管理员强制采集。读者打开页面只读缓存。
+
+改这两个开关后要重启 API、worker 和 Web。只重启 API 时，导航仍可能是旧的。
+
+本机单机：API 和 worker 必须是同一个 `AIHOT_DATA_DIR`。锁文件和 `github-trending.json` 都在 `{dataDir}/mafi-readers/`。目录不同则锁无效，两边各有一份快照。启用前核对两边打印出来的 dataDir。
+
+**Cloudflare 只做 DNS 或反向代理到原来这台主机**时，进程、磁盘和 worker cron 都还在，这套实现可以继续用。注意不要把 `/github-trending` 和 `/api/mafi-readers/` 缓存在边缘，响应已经是 `Cache-Control: private, no-store`。
+
+**不能把现在的实现直接挪到 Cloudflare Workers 或 Pages。** 那边没有持久的本地文件，也没有一直跑着的进程 cron。要迁过去，需要另做共享存储、跨实例的锁，以及平台自己的计划任务。本期没有实现这些，也不承诺那样部署。
+
+不启用信源 `web-github-trending`。趋势页不是文章，不写发布日期。
+
 日报缺期告警按北京时间的具体日期跟踪，跨午夜不会自动恢复；只有对应日报存在才发恢复通知。新缺期检查最近 7 个日历日（含今天），不早于最早的日报或 reports.compose 运行记录；没有历史记录时只检查今天。已告警的日期在这 7 天里一直跟踪，关闭采集/模型或 worker 启动宽限期也不会把缺期当成恢复；超出 7 天仍没有日报的，发一条“没能补出、停止提醒”后不再提醒。旧的 report.daily 状态自动按首次告警时间迁移，保留提醒间隔。出刊后两小时告警、每小时提醒及飞书开关保持不变；无需数据库迁移。自定义 responder 若按旧 `report.daily` 精确匹配，需改为识别 `report.daily:YYYY-MM-DD` 日期键。
 
 #### 读者文字的改用词（2026 年 10 月 9 日）

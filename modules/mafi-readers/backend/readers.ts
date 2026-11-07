@@ -14,6 +14,8 @@ export interface ReaderOptions {
   fetch: ReaderFetch;
   store: ReaderStore;
   now?: () => number;
+  /** When omitted, only the exact env string true turns Tibo collection back on. */
+  codexEnabled?: () => boolean;
 }
 export function isLocalSite(siteUrl: string): boolean {
   try {
@@ -46,6 +48,20 @@ export function createReaders(options: ReaderOptions) {
   }
   return {
     async codexResets(): Promise<ReadResult<CodexData>> {
+      const enabled = options.codexEnabled ? options.codexEnabled() : process.env.MAFI_CODEX_RESET_ENABLED === "true";
+      if (!enabled) {
+        let data: CodexData | null = null;
+        let fetchedAt: string | null = null;
+        try {
+          const saved = await options.store.read("codex-resets");
+          if (saved && typeof saved === "object") {
+            const record = saved as { data?: unknown; fetchedAt?: unknown };
+            if (record.data != null) data = recentCodex(parseCodex(record.data, true), now());
+            fetchedAt = typeof record.fetchedAt === "string" ? record.fetchedAt : null;
+          }
+        } catch { data = null; fetchedAt = null; }
+        return { status: "paused", sourceUrl: AUTHOR_SOURCE + "/codex-reset", fetchedAt, nextRefreshAt: null, message: "Tibo 重置监控已暂停，未请求上游。", data };
+      }
       if (!isLocalSite(options.siteUrl)) return blocked(AUTHOR_SOURCE + "/codex-reset", "local_only");
       const result = await cache.get("codex-resets", AUTHOR_SOURCE + "/codex-reset", 600_000, (v) => parseCodex(v, true), async ({ etag: tag }) => {
         const response = await request(CODEX_URL, tag ? { "if-none-match": tag } : {});

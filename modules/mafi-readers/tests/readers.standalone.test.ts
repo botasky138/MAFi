@@ -30,10 +30,56 @@ function model(id: string) {
 function aaPage(page = 1, total = 1, id = `id-${page}`, version = 4.1) {
   return { tier: "free", intelligence_index_version: version, pagination: { page, page_size: 1, total_pages: total, has_more: page < total }, data: [model(id)] };
 }
-function harness(fetch: ReaderFetch, store: ReaderStore = new MemoryStore(), siteUrl = "http://localhost:3000", key: string | undefined = undefined) {
+function harness(fetch: ReaderFetch, store: ReaderStore = new MemoryStore(), siteUrl = "http://localhost:3000", key: string | undefined = undefined, codexEnabled: () => boolean = () => true) {
   let now = AT;
-  return { store, advance: (milliseconds: number) => { now += milliseconds; }, readers: () => createReaders({ fetch, store, siteUrl, aaKey: () => key, now: () => now }) };
+  return { store, advance: (milliseconds: number) => { now += milliseconds; }, readers: () => createReaders({ fetch, store, siteUrl, aaKey: () => key, now: () => now, codexEnabled }) };
 }
+
+test("Tibo stays paused unless explicitly enabled: no upstream request and no cache write", async () => {
+  let calls = 0;
+  let writes = 0;
+  const store: ReaderStore = { read: async () => null, write: async () => { writes += 1; } };
+  const paused = createReaders({
+    siteUrl: "http://localhost:3000",
+    fetch: async () => { calls += 1; return response(codex()); },
+    store,
+    codexEnabled: () => false,
+  });
+  const off = await paused.codexResets();
+  assert.equal(off.status, "paused");
+  assert.equal(off.data, null);
+  assert.match(off.message ?? "", /暂停/);
+  assert.equal(calls, 0);
+  assert.equal(writes, 0);
+
+  const disk = new MemoryStore();
+  await disk.write("codex-resets", { version: 1, data: codex(), fetchedAt: ISO, nextRefreshAt: new Date(AT + 600_000).toISOString(), etag: null, message: null, quotaWindowStart: null, requestCount: 0 });
+  let diskWrites = 0;
+  const reading: ReaderStore = { read: (key) => disk.read(key), write: async () => { diskWrites += 1; } };
+  const kept = await createReaders({
+    siteUrl: "http://localhost:3000",
+    fetch: async () => { calls += 1; return response(codex()); },
+    store: reading,
+    codexEnabled: () => false,
+    now: () => AT,
+  }).codexResets();
+  assert.equal(kept.status, "paused");
+  assert.equal(kept.data?.events[0]?.title, "Tibo 预告");
+  assert.equal(kept.fetchedAt, ISO);
+  assert.equal(diskWrites, 0);
+  assert.equal(calls, 0);
+
+  let aaCalls = 0;
+  const aa = await createReaders({
+    siteUrl: "http://localhost:3000",
+    fetch: async () => { aaCalls += 1; return response(aaPage()); },
+    store: new MemoryStore(),
+    aaKey: () => "synthetic-key",
+    codexEnabled: () => false,
+  }).aaModels();
+  assert.equal(aa.status, "ready");
+  assert.equal(aaCalls, 1);
+});
 
 test("Tibo TTL and simultaneous page reads share a single request, then use an ETag 304", async () => {
   const calls: { url: string; options: GuardedFetchOptions }[] = [];
@@ -277,7 +323,7 @@ test("real file persistence restores successful content and a failure cooldown a
     assert.deepEqual(await h.readers().codexResets(), first); assert.equal(calls, 1);
     h.advance(600_000);
     const limited = await h.readers().codexResets();
-    const recreated = createReaders({ siteUrl: "http://localhost", store: new FileReaderStore(directory), fetch: async () => { throw new Error("Restart must use disk cooldown"); }, now: () => AT + 700_000 });
+    const recreated = createReaders({ siteUrl: "http://localhost", store: new FileReaderStore(directory), fetch: async () => { throw new Error("Restart must use disk cooldown"); }, now: () => AT + 700_000, codexEnabled: () => true });
     assert.deepEqual(await recreated.codexResets(), limited);
     const disk = await readFile(path.join(directory, "codex-resets.json"), "utf8");
     assert.equal(disk.includes("authorization"), false);

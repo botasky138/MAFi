@@ -1,5 +1,5 @@
 /** Private, local reader data. Strings are plain text, never HTML. */
-export type ReadStatus = "ready" | "stale" | "unavailable" | "needs_key" | "local_only";
+export type ReadStatus = "ready" | "stale" | "unavailable" | "needs_key" | "local_only" | "paused" | "disabled";
 export interface ReadResult<T> {
   status: ReadStatus;
   sourceUrl: string;
