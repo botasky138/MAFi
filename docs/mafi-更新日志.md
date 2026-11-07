@@ -1,4 +1,13 @@
 # MAFi 更新日志
+## 2026-11-07 20:53（北京时间 Asia/Shanghai）GitHub 趋势专页，Tibo 默认暂停（b2fdc584aa44f8cc982bea95e7bb42ea38543866）
+
+功能提交时间 `2026-11-07T12:53:53+00:00`，换算为北京时间 2026-11-07 20:53:53。本条不把随后的日志提交 SHA 当作功能 SHA。
+
+- `MAFI_CODEX_RESET_ENABLED` 只有小写 `true` 才恢复 Tibo 上游请求。默认暂停：路由和代码保留，上游 0 次、缓存 0 写入。AA 模型榜不受影响。恢复要重启 API 与 Web。
+- `/github-trending` 按 GitHub Trending 的期间新增星数降序。排除 `vercel-labs/agent-desktop` 与 `thedotmack/claude-mem`。读者刷新只读缓存。`MAFI_GITHUB_TREND_ENABLED=true` 时 worker 按今日 30 分钟、本周 2 小时、本月 6 小时采集。管理员强制采集有 60 秒冷却，并要求 API 与 worker 共用同一个 `AIHOT_DATA_DIR`。
+- 本期不做 topics 规则和模型分类。Cloudflare 仅反代与 Workers/Pages 的差别写在 `docs/deploy.md`。
+- 回滚代码：`git revert b2fdc584aa44f8cc982bea95e7bb42ea38543866`。只暂停 Tibo：变量保持不是 `true`。恢复监控：设为 `true` 并重启 API 与 Web。关掉趋势：`MAFI_GITHUB_TREND_ENABLED` 改为不是 `true`，重启 API、worker 与 Web。
+
 ## 2026-11-01 20:10 展示下限改按发布时间；精选计数与页面一致；「更新」页（08f0808, ce04526, 425eaa2）
 - 08f0808：精选/动态展示下限改为 published_at ≥ 2026-10-23 北京时间（原为 sort_at）；无发布时间的条目不展示（抓取时间不是发布时间）。10-01 入库下限不变；热点/报告沿用自己的日期窗口（遵守 5313b48 测试）。
 - ce04526：精选计数不一致的根因：①事实卡片的代表条目从全部组员中挑选，可能选中已超配额来源的报道，使该来源在页面上“多出”一张卡；②旧的核对脚本只数独立卡、页面则数所有卡的显示条目，口径不同；③精选分组列表有 5 秒缓存，投票后不失效。修复：代表条目只从配额内保留的条目中选；投票时提升配额版本号，使分组缓存立即失效。在线测试每一步页面数 == 引擎数。
