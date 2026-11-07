@@ -1,6 +1,7 @@
 import { data, useLoaderData } from "react-router";
 import { beijingDate, beijingTime } from "@aihot/contracts/time";
 import type { CodexData, CodexEvent } from "../contracts.ts";
+import { codexResetEnabled, githubTrendEnabled } from "../flags.ts";
 import { PRIVATE_HEADERS, ReaderFooter, ReaderNav, ReaderState, SourceLink, timeLabel, useReaderRefresh } from "./common.tsx";
 import { pickFeaturedCodexEvent } from "./codex-featured.ts";
 import { readPage } from "./reader.server.ts";
@@ -13,7 +14,11 @@ const SOURCE_URL = "https://aihot.news/codex-reset";
 export const handle = { tab: "models", name: "Tibo 重置监控" };
 
 export async function loader({ request }: { request: Request }) {
-  return data({ result: await readPage<CodexData>("/api/mafi-readers/codex-resets", SOURCE_URL, request), now: new Date().toISOString() }, { headers: PRIVATE_HEADERS });
+  return data({
+    result: await readPage<CodexData>("/api/mafi-readers/codex-resets", SOURCE_URL, request),
+    now: new Date().toISOString(),
+    flags: { codexReset: codexResetEnabled(), githubTrend: githubTrendEnabled() },
+  }, { headers: PRIVATE_HEADERS });
 }
 
 export function meta() {
@@ -68,8 +73,8 @@ function Calendar({ events, today }: { events: CodexEvent[]; today: string }) {
 }
 
 export default function CodexResetPage() {
-  const { result, now } = useLoaderData<typeof loader>();
-  useReaderRefresh();
+  const { result, now, flags } = useLoaderData<typeof loader>();
+  useReaderRefresh(result.status !== "paused");
   const codex = result.data;
   const today = codex?.today ?? beijingDate(now);
   const featured = pickFeaturedCodexEvent(codex?.events);
@@ -93,7 +98,7 @@ export default function CodexResetPage() {
       <p className="mt-3 text-[11px] leading-[1.7] text-ink-4">打开本页每 10 分钟更新，关闭后不后台监控。AIHOT 整理，非 OpenAI 官方页面；账户状态以 Codex 内显示为准。</p>
     </AsideCard>
   </>}>
-    <ReaderNav active="codex" />
+    <ReaderNav active="codex" flags={flags} />
     <header>
       <Kicker>公开消息观察</Kicker>
       <h1 data-page-title="" className="mt-2 text-[24px] font-semibold leading-[1.3] text-ink">Tibo 重置监控</h1>

@@ -121,7 +121,7 @@ export interface WebModule {
   /** Phone tab bar: tabs before 我的. */
   tabs?: Tab[];
   /** The 我的 page: rows ahead of the engine's tools. */
-  tools?: Array<{ to: string; label: string; icon: ReactNode }>;
+  tools?: Array<{ to: string; label: string; icon: ReactNode; flag?: "codexReset" | "githubTrend" }>;
   admin?: {
     /** Navigation groups of its own, ahead of the engine's. */
     groups?: Array<{ group: string; items: AdminNavEntry[] }>;
