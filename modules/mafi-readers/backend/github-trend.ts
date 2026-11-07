@@ -1,7 +1,8 @@
+import { readFileSync } from "node:fs";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { FileReaderStore } from "./cache.ts";
-import { isTrendSince, type TrendItem, type TrendSince, type TrendWindowResult } from "../trend-contract.ts";
+import { isTrendSince, type TrendCategory, type TrendItem, type TrendSince, type TrendWindowResult } from "../trend-contract.ts";
 
 export type { TrendItem, TrendSince, TrendWindowResult };
 export { isTrendSince };
@@ -19,6 +20,13 @@ const SOURCE: Record<TrendSince, string> = {
 const EXCLUDED = new Set(["vercel-labs/agent-desktop", "thedotmack/claude-mem"]);
 const LOCK_MS = 180_000;
 const FORCE_COOLDOWN_MS = 60_000;
+const TOPIC_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const TOPIC_HOUR_BUDGET = 10;
+const TOPIC_RULES: Record<"agent" | "devtools" | "infra", ReadonlySet<string>> = {
+  agent: new Set(["agent", "agents", "ai-agent", "llm", "llm-agent", "autonomous-agents", "coding-agent"]),
+  devtools: new Set(["developer-tools", "devtools", "cli", "command-line"]),
+  infra: new Set(["infrastructure", "kubernetes", "devops", "observability", "platform-engineering"]),
+};
 const SINCE: TrendSince[] = ["daily", "weekly", "monthly"];
 
 export interface ParseResult {
@@ -44,12 +52,30 @@ interface Envelope {
 }
 
 export interface TrendFetchResult { status: number; body: string; retryAfter: string | null }
+export interface TopicFetchResult {
+  status: number;
+  topics: string[] | null;
+  retryAfter: string | null;
+  remaining: number | null;
+  resetAt: number | null;
+}
 export interface TrendIO {
   dir: string;
   now: () => number;
   enabled: boolean;
   fetch: (url: string) => Promise<TrendFetchResult>;
+  /** Absent in tests that only exercise HTML. Production supplies the GitHub topics API. */
+  topicFetch?: (fullName: string) => Promise<TopicFetchResult>;
   mode: "due" | "force";
+}
+
+interface TopicRepo { topics: string[] | null; fetchedAt: string | null }
+interface TopicState {
+  version: 1;
+  hourStart: number;
+  used: number;
+  pauseUntil: number | null;
+  repos: Record<string, TopicRepo>;
 }
 
 function blank(since: TrendSince): StoredWindow {
@@ -96,7 +122,7 @@ export function parseTrendingHtml(html: string, since: TrendSince): ParseResult 
       starsPeriod,
       periodText: `${period[1]} stars ${period[2]}`,
       category: "pending",
-      topics: [],
+      topics: null,
     });
   }
   return { rawCards: chunks.length, withPeriod };
@@ -110,13 +136,28 @@ export function sortByPeriod(items: readonly TrendItem[]): TrendItem[] {
   return [...items].sort((a, b) => b.starsPeriod - a.starsPeriod || a.fullName.localeCompare(b.fullName));
 }
 
+/** topics 为 null 表示还没取到。空数组或有 topic 但无法唯一归类，都是未分类。 */
+export function classifyTopics(topics: readonly string[] | null): TrendCategory {
+  if (topics == null) return "pending";
+  const hits = new Set<TrendCategory>();
+  for (const raw of topics) {
+    const topic = raw.toLowerCase();
+    for (const [category, words] of Object.entries(TOPIC_RULES) as Array<["agent" | "devtools" | "infra", ReadonlySet<string>]>) {
+      if (words.has(topic)) hits.add(category);
+    }
+  }
+  if (hits.size === 1) return [...hits][0]!;
+  return "unclassified";
+}
+
 function keptItem(value: unknown): TrendItem | null {
   if (!value || typeof value !== "object") return null;
   const item = value as TrendItem;
   if (typeof item.fullName !== "string" || !item.fullName.includes("/")) return null;
   if (typeof item.starsPeriod !== "number" || !Number.isSafeInteger(item.starsPeriod) || item.starsPeriod < 0) return null;
   if (item.starsTotal !== null && (typeof item.starsTotal !== "number" || !Number.isSafeInteger(item.starsTotal))) return null;
-  return { ...item, category: "pending", topics: [] };
+  const topics = Array.isArray(item.topics) ? item.topics.filter((topic) => typeof topic === "string") : null;
+  return { ...item, topics, category: classifyTopics(topics) };
 }
 
 function storeFor(dir: string): FileReaderStore {
@@ -151,6 +192,16 @@ async function save(dir: string, envelope: Envelope): Promise<void> {
   await storeFor(dir).write("github-trending", envelope);
 }
 
+function procStart(pid: number): string | null {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const after = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    return after[19] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function pidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -163,11 +214,13 @@ function pidAlive(pid: number): boolean {
 async function releaseStaleLock(lockPath: string, now: number): Promise<void> {
   try {
     const text = await readFile(lockPath, "utf8");
-    const [pidText, startedText] = text.split("\n");
+    const [pidText, startText, startedText] = text.split("\n");
     const pid = Number(pidText);
     const started = Number(startedText);
-    const alive = Number.isInteger(pid) && pid > 0 && pidAlive(pid);
     const fresh = Number.isFinite(started) && now - started < LOCK_MS;
+    const currentStart = Number.isInteger(pid) && pid > 0 ? procStart(pid) : null;
+    const sameProcess = currentStart !== null && startText !== "" && currentStart === startText;
+    const alive = sameProcess || (currentStart === null && Number.isInteger(pid) && pid > 0 && pidAlive(pid));
     if (alive && fresh) return;
     await unlink(lockPath);
   } catch (error) {
@@ -180,7 +233,7 @@ async function withLock<T>(dir: string, now: number, fn: () => Promise<T>): Prom
   const lockPath = path.join(dir, "github-trending.lock");
   await releaseStaleLock(lockPath, now);
   try {
-    await writeFile(lockPath, `${process.pid}\n${now}`, { flag: "wx", mode: 0o600 });
+    await writeFile(lockPath, `${process.pid}\n${procStart(process.pid) ?? ""}\n${now}`, { flag: "wx", mode: 0o600 });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EEXIST") return "locked";
     throw error;
@@ -197,25 +250,132 @@ function retriable(status: number): boolean {
 }
 
 async function pull(io: TrendIO, url: string): Promise<TrendFetchResult> {
-  const once = async () => io.fetch(url);
+  let first: TrendFetchResult | null = null;
   try {
-    const first = await once();
+    first = await io.fetch(url);
     if (!retriable(first.status)) return first;
   } catch {
-    /* one retry below */
+    first = null;
   }
   await new Promise((resolve) => setTimeout(resolve, 2_000));
   try {
-    return await once();
+    const second = await io.fetch(url);
+    return second.retryAfter || !first?.retryAfter ? second : { ...second, retryAfter: first.retryAfter };
   } catch {
-    return { status: 0, body: "", retryAfter: null };
+    return first ?? { status: 0, body: "", retryAfter: null };
   }
 }
 
+export function retryAfterMs(header: string | null, now: number): number | null {
+  if (!header) return null;
+  const value = header.trim();
+  if (/^\d+$/.test(value)) return Number(value) * 1000;
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, date - now) : null;
+}
+
 function planAfter(now: number, interval: number, retryAfter: string | null): string {
-  let extra = interval;
-  if (retryAfter && /^\d+$/.test(retryAfter)) extra = Math.max(extra, Number(retryAfter) * 1000);
+  const extra = Math.max(interval, retryAfterMs(retryAfter, now) ?? 0);
   return new Date(now + extra).toISOString();
+}
+
+function emptyTopics(): TopicState {
+  return { version: 1, hourStart: 0, used: 0, pauseUntil: null, repos: {} };
+}
+
+async function loadTopics(dir: string): Promise<TopicState> {
+  const saved = await storeFor(dir).read("github-trend-topics");
+  if (!saved || typeof saved !== "object") return emptyTopics();
+  const record = saved as Partial<TopicState>;
+  const repos: Record<string, TopicRepo> = {};
+  for (const [name, value] of Object.entries(record.repos ?? {})) {
+    if (!value || typeof value !== "object") continue;
+    const row = value as TopicRepo;
+    repos[name.toLowerCase()] = {
+      topics: Array.isArray(row.topics) ? row.topics.filter((topic) => typeof topic === "string") : null,
+      fetchedAt: typeof row.fetchedAt === "string" ? row.fetchedAt : null,
+    };
+  }
+  return {
+    version: 1,
+    hourStart: typeof record.hourStart === "number" ? record.hourStart : 0,
+    used: typeof record.used === "number" ? record.used : 0,
+    pauseUntil: typeof record.pauseUntil === "number" ? record.pauseUntil : null,
+    repos,
+  };
+}
+
+async function saveTopics(dir: string, state: TopicState): Promise<void> {
+  await storeFor(dir).write("github-trend-topics", state);
+}
+
+function topicDue(state: TopicState, name: string, now: number): boolean {
+  const row = state.repos[name];
+  if (!row?.fetchedAt) return true;
+  return now - Date.parse(row.fetchedAt) >= TOPIC_TTL_MS;
+}
+
+function decorate(items: TrendItem[], state: TopicState): TrendItem[] {
+  return items.map((item) => {
+    const row = state.repos[item.fullName.toLowerCase()];
+    const topics = row?.topics ?? null;
+    return { ...item, topics, category: classifyTopics(topics) };
+  });
+}
+
+/** Expired rows are ahead of never-fetched ones, so a full hour of new repos cannot freeze old topics. */
+export function topicQueue(names: readonly string[], state: TopicState, now: number): string[] {
+  return [...new Set(names.map((name) => name.toLowerCase()))].filter((name) => topicDue(state, name, now)).sort((a, b) => {
+    const af = state.repos[a]?.fetchedAt;
+    const bf = state.repos[b]?.fetchedAt;
+    if (af && bf) return Date.parse(af) - Date.parse(bf) || a.localeCompare(b);
+    if (af) return -1;
+    if (bf) return 1;
+    return a.localeCompare(b);
+  });
+}
+
+async function enrichTopics(dir: string, names: readonly string[], io: TrendIO): Promise<void> {
+  if (!io.topicFetch || names.length === 0) return;
+  const state = await loadTopics(dir);
+  const now = io.now();
+  const hour = Math.floor(now / 3_600_000);
+  if (state.hourStart !== hour) {
+    state.hourStart = hour;
+    state.used = 0;
+  }
+  if (state.pauseUntil !== null && now >= state.pauseUntil) state.pauseUntil = null;
+  if (state.pauseUntil !== null && now < state.pauseUntil) {
+    await saveTopics(dir, state);
+    return;
+  }
+  let changed = state.hourStart === hour;
+  for (const name of topicQueue(names, state, now)) {
+    if (state.used >= TOPIC_HOUR_BUDGET) break;
+    if (state.pauseUntil !== null && io.now() < state.pauseUntil) break;
+    let result: TopicFetchResult;
+    try {
+      result = await io.topicFetch(name);
+    } catch {
+      result = { status: 0, topics: null, retryAfter: null, remaining: null, resetAt: null };
+    }
+    state.used += 1;
+    changed = true;
+    const limited = result.status === 403 || result.status === 429 || (result.remaining !== null && result.remaining < 10);
+    if (limited && result.topics === null) {
+      const reset = result.resetAt ?? (retryAfterMs(result.retryAfter, io.now()) !== null ? io.now() + (retryAfterMs(result.retryAfter, io.now()) ?? 0) : null);
+      state.pauseUntil = reset ?? hour * 3_600_000 + 3_600_000;
+      break;
+    }
+    if (result.status === 200 && result.topics) {
+      state.repos[name] = { topics: result.topics.map((topic) => topic.toLowerCase()), fetchedAt: new Date(io.now()).toISOString() };
+      if (result.remaining !== null && result.remaining < 10) state.pauseUntil = result.resetAt ?? hour * 3_600_000 + 3_600_000;
+      continue;
+    }
+    const previous = state.repos[name];
+    state.repos[name] = { topics: previous?.topics ?? null, fetchedAt: new Date(io.now()).toISOString() };
+  }
+  if (changed) await saveTopics(dir, state);
 }
 
 export async function readGithubTrend(io: Omit<TrendIO, "mode"> & { since: TrendSince }): Promise<TrendWindowResult> {
@@ -224,7 +384,7 @@ export async function readGithubTrend(io: Omit<TrendIO, "mode"> & { since: Trend
     return { status: "disabled", since: io.since, sourceUrl, fetchedAt: null, attemptedAt: null, nextRefreshAt: null, trigger: null, message: "GitHub 趋势未启用", items: [], demo: false };
   }
   const window = (await load(io.dir)).windows[io.since];
-  const items = sortByPeriod(applyExclusions(window.items));
+  const items = decorate(sortByPeriod(applyExclusions(window.items)), await loadTopics(io.dir));
   if (!window.fetchedAt) {
     return { status: "unavailable", since: io.since, sourceUrl, fetchedAt: null, attemptedAt: window.attemptedAt, nextRefreshAt: window.nextRefreshAt, trigger: window.trigger, message: window.lastError ?? "尚未采集", items: [], demo: false };
   }
@@ -259,9 +419,10 @@ export async function refreshGithubTrend(io: TrendIO): Promise<{ ok: boolean; re
   }
   const ran = await withLock(io.dir, now, async () => {
     const envelope = await load(io.dir);
-    if (io.mode === "force") envelope.forcedAt = new Date(now).toISOString();
+    if (io.mode === "force" && envelope.forcedAt && io.now() - Date.parse(envelope.forcedAt) < FORCE_COOLDOWN_MS) return "cooldown" as const;
     const windows = { daily: { ok: true }, weekly: { ok: true }, monthly: { ok: true } };
     let any = false;
+    const seen = new Set<string>();
     for (const since of SINCE) {
       const current = envelope.windows[since];
       if (io.mode === "due" && current.nextRefreshAt && Date.parse(current.nextRefreshAt) > now) continue;
@@ -284,16 +445,27 @@ export async function refreshGithubTrend(io: TrendIO): Promise<{ ok: boolean; re
         continue;
       }
       current.items = sortByPeriod(applyExclusions(parsed.withPeriod));
+      for (const item of current.items) seen.add(item.fullName.toLowerCase());
       current.fetchedAt = at;
       current.lastError = null;
       current.demo = false;
       current.nextRefreshAt = planAfter(io.now(), WINDOW_MS[since], null);
       windows[since] = { ok: true };
     }
-    if (any || io.mode === "force") await save(io.dir, envelope);
+    for (const since of SINCE) for (const item of envelope.windows[since].items) seen.add(item.fullName.toLowerCase());
+    if (any || io.mode === "force") {
+      if (io.mode === "force") envelope.forcedAt = new Date(io.now()).toISOString();
+      await save(io.dir, envelope);
+    }
+    await enrichTopics(dirOf(io), [...seen], io);
     return windows;
   });
   if (ran === "locked") return { ok: false, reason: "locked", windows: idle };
+  if (ran === "cooldown") return { ok: false, reason: "cooldown", windows: idle };
   return { ok: true, windows: ran };
+}
+
+function dirOf(io: TrendIO): string {
+  return io.dir;
 }
 

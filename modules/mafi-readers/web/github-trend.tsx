@@ -70,7 +70,7 @@ export default function GithubTrendPage() {
   const windowSince = since ?? active;
   const busy = revalidator.state !== "idle";
   return (
-    <div className="pb-10 text-[#e8e8ec]" style={{ backgroundColor: "#0a0a0c", color: "#e8e8ec" }}>
+    <div className="pb-[calc(88px+env(safe-area-inset-bottom))] text-[#e8e8ec] lg:pb-10" style={{ backgroundColor: "#0a0a0c", color: "#e8e8ec" }}>
       <PhoneBar back={{ to: "/leaderboard", label: "AA 模型榜" }} title="GitHub 趋势" />
       <ReaderNav active="github" flags={flags} tone="inverse" />
       <header className="max-w-[68ch]">
@@ -115,7 +115,7 @@ export default function GithubTrendPage() {
                   <a href={item.url} target="_blank" rel="noopener noreferrer" className="text-[16px] font-semibold text-[#e8e8ec] underline-offset-4 hover:text-[#e8d48b] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#c9a227]">{item.fullName}</a>
                   {item.description && <p className="mt-1 text-[13px] leading-relaxed text-[#9a9aa4]">{item.description}</p>}
                   <p className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-[#9a9aa4]">
-                    <span className="rounded-full border border-[#3a3a40] px-2 py-0.5 text-[#c8c8d0]">待确认</span>
+                    <span className={`rounded-full border px-2 py-0.5 ${item.category === "pending" || item.category === "unclassified" || index >= 3 ? "border-[#3a3a40] text-[#c8c8d0]" : "border-[#c9a227] text-[#e8d48b]"}`}>{item.category === "agent" ? "Agent/AI" : item.category === "devtools" ? "开发工具" : item.category === "infra" ? "基础设施" : item.category === "unclassified" ? "未分类" : "待确认"}</span>
                     {item.language && <span>{item.language}</span>}
                     <span>第 {index + 1} 名</span>
                   </p>

@@ -5,12 +5,13 @@ import { guardedFetch } from "@aihot/backend/lib/http-fetch";
 import { codexResetEnabled, githubTrendEnabled } from "./flags.ts";
 import { FileReaderStore } from "./backend/cache.ts";
 import { createReaders, type Readers } from "./backend/readers.ts";
-import { isTrendSince, readGithubTrend, refreshGithubTrend, type TrendFetchResult, type TrendSince } from "./backend/github-trend.ts";
+import { isTrendSince, readGithubTrend, refreshGithubTrend, type TopicFetchResult, type TrendFetchResult, type TrendSince } from "./backend/github-trend.ts";
 
 export interface TrendControls {
   dir: string;
   now: () => number;
   fetch: (url: string) => Promise<TrendFetchResult>;
+  topicFetch?: (fullName: string) => Promise<TopicFetchResult>;
   enabled: () => boolean;
   authenticate: (cookie: string | undefined) => Promise<{ csrf: string } | null>;
 }
@@ -32,6 +33,34 @@ async function fetchTrending(url: string): Promise<TrendFetchResult> {
   return { status: response.status, body: response.text(), retryAfter: response.headers.get("retry-after") };
 }
 
+async function fetchTopics(fullName: string): Promise<TopicFetchResult> {
+  const [owner, repo] = fullName.split("/");
+  if (!owner || !repo || owner === "." || owner === ".." || repo === "." || repo === "..") throw new Error("Invalid repository");
+  const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/topics`;
+  const headers: Record<string, string> = { accept: "application/vnd.github+json", "user-agent": "mafi-readers" };
+  const token = process.env.GITHUB_TOKEN?.trim();
+  if (token) headers.authorization = `Bearer ${token}`;
+  const response = await guardedFetch(url, { method: "GET", timeoutMs: 15_000, maxBytes: 1_000_000, maxRedirects: 0, headers });
+  const remaining = Number(response.headers.get("x-ratelimit-remaining"));
+  const reset = Number(response.headers.get("x-ratelimit-reset"));
+  let topics: string[] | null = null;
+  if (response.status === 200) {
+    try {
+      const parsed = JSON.parse(response.text()) as { names?: unknown };
+      topics = Array.isArray(parsed.names) ? parsed.names.filter((name): name is string => typeof name === "string") : [];
+    } catch {
+      topics = null;
+    }
+  }
+  return {
+    status: response.status,
+    topics,
+    retryAfter: response.headers.get("retry-after"),
+    remaining: Number.isFinite(remaining) ? remaining : null,
+    resetAt: Number.isFinite(reset) ? reset * 1000 : null,
+  };
+}
+
 async function defaultAuthenticate(cookie: string | undefined): Promise<{ csrf: string } | null> {
   const { sessionPrincipal } = await import("@aihot/backend/admin/auth");
   const admin = await sessionPrincipal(cookie);
@@ -43,6 +72,7 @@ function trendControls(partial?: Partial<TrendControls>): TrendControls {
     dir: partial?.dir ?? path.join(config.dataDir, "mafi-readers"),
     now: partial?.now ?? Date.now,
     fetch: partial?.fetch ?? fetchTrending,
+    topicFetch: partial ? partial.topicFetch : fetchTopics,
     enabled: partial?.enabled ?? githubTrendEnabled,
     authenticate: partial?.authenticate ?? defaultAuthenticate,
   };
@@ -58,7 +88,7 @@ export function createReaderServer(readers?: Readers, trend?: Partial<TrendContr
     store: new FileReaderStore(path.join(config.dataDir, "mafi-readers")),
     codexEnabled: codexResetEnabled,
   });
-  const io = (mode: "due" | "force") => ({ dir: controls.dir, now: controls.now, fetch: controls.fetch, enabled: controls.enabled(), mode });
+  const io = (mode: "due" | "force") => ({ dir: controls.dir, now: controls.now, fetch: controls.fetch, topicFetch: controls.topicFetch, enabled: controls.enabled(), mode });
   return {
     name: "mafi-readers",
     schedules: [{

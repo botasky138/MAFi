@@ -6,7 +6,7 @@ import path from "node:path";
 import Fastify from "fastify";
 import { explicitlyEnabled } from "../flags.ts";
 import {
-  WINDOW_MS, applyExclusions, parseTrendingHtml, sortByPeriod,
+  WINDOW_MS, applyExclusions, classifyTopics, parseTrendingHtml, retryAfterMs, sortByPeriod, topicQueue,
   readGithubTrend, refreshGithubTrend,
 } from "../backend/github-trend.ts";
 import { createReaderServer } from "../server.ts";
@@ -28,6 +28,58 @@ const dailyHtml = [
   card("missing/period", null, "80"),
   card("nototal/ok", "3 stars today", null),
 ].join("");
+
+test("topics classify a single hit, a conflict, and a miss without using a model", () => {
+  assert.equal(classifyTopics(null), "pending");
+  assert.equal(classifyTopics(["llm"]), "agent");
+  assert.equal(classifyTopics(["kubernetes", "cli"]), "unclassified");
+  assert.equal(classifyTopics(["unknown-topic"]), "unclassified");
+  assert.equal(classifyTopics([]), "unclassified");
+});
+
+test("expired topic rows are refreshed before new ones, and a rate-limit pause is not permanent", async () => {
+  const directory = await dir();
+  const html = [card("old/repo", "5 stars today", "9"), card("new/repo", "4 stars today", "8")].join("");
+  const calls: string[] = [];
+  let remaining = 40;
+  const topicFetch = async (fullName: string) => {
+    calls.push(fullName);
+    return { status: 200, topics: fullName === "old/repo" ? ["llm"] : ["cli"], retryAfter: null, remaining, resetAt: AT + 3_600_000 };
+  };
+  await refreshGithubTrend({ dir: directory, now: () => AT, enabled: true, fetch: async () => ({ status: 200, body: html, retryAfter: null }), topicFetch, mode: "force" });
+  assert.deepEqual(calls, ["old/repo", "new/repo"].sort());
+  const ready = await readGithubTrend({ dir: directory, now: () => AT, enabled: true, fetch: async () => { throw new Error("read"); }, since: "daily" });
+  assert.equal(ready.items.find((item) => item.fullName === "old/repo")?.category, "agent");
+  assert.equal(ready.items.find((item) => item.fullName === "new/repo")?.category, "devtools");
+  calls.length = 0;
+  await refreshGithubTrend({ dir: directory, now: () => AT + WINDOW_MS.daily, enabled: true, fetch: async () => ({ status: 200, body: html, retryAfter: null }), topicFetch, mode: "due" });
+  assert.deepEqual(calls, []);
+  const state = { version: 1 as const, hourStart: 0, used: 0, pauseUntil: null, repos: { "old/repo": { topics: ["llm"], fetchedAt: new Date(AT - 8 * 24 * 60 * 60 * 1000).toISOString() } } };
+  assert.deepEqual(topicQueue(["old/repo", "new/repo"], state, AT), ["old/repo", "new/repo"]);
+  remaining = 3;
+  const limited: string[] = [];
+  await refreshGithubTrend({
+    dir: directory,
+    now: () => AT + 8 * 24 * 60 * 60 * 1000,
+    enabled: true,
+    fetch: async () => ({ status: 200, body: html, retryAfter: null }),
+    topicFetch: async (fullName) => { limited.push(fullName); return { status: 403, topics: null, retryAfter: null, remaining: 3, resetAt: AT + 8 * 24 * 60 * 60 * 1000 + 60_000 }; },
+    mode: "force",
+  });
+  assert.equal(limited.length, 1);
+  const later: string[] = [];
+  await refreshGithubTrend({
+    dir: directory,
+    now: () => AT + 8 * 24 * 60 * 60 * 1000 + 61_000,
+    enabled: true,
+    fetch: async () => ({ status: 200, body: html, retryAfter: null }),
+    topicFetch: async (fullName) => { later.push(fullName); return { status: 200, topics: ["kubernetes"], retryAfter: null, remaining: 40, resetAt: null }; },
+    mode: "force",
+  });
+  assert.equal(later.length > 0, true);
+  assert.equal(retryAfterMs("Wed, 21 Oct 2026 07:28:00 GMT", Date.parse("Wed, 21 Oct 2026 07:27:00 GMT")), 60_000);
+  await rm(directory, { recursive: true, force: true });
+});
 
 test("only the exact string true enables a switch", () => {
   assert.equal(explicitlyEnabled("true"), true);

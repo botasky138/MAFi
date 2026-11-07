@@ -24,7 +24,7 @@ AA key 只保存在被 Git 忽略的本机 .env 中，变量为 AA_API_KEY。示
 
 `MAFI_CODEX_RESET_ENABLED` 只有小写 `true` 才恢复 Tibo 上游请求。缺省是暂停：路由和代码还在，不打上游，也不改写缓存。AA 不受这个开关影响。恢复或再次暂停都要重启 API 和 Web。
 
-`/github-trending` 读 GitHub 趋势页的期间新增星数，不是全站榜，也不是模型榜。导航放在「AA 模型榜」下面，只是沿用「模型」这一段的位置。`GET` 只读 `{dataDir}/mafi-readers/github-trending.json`。`MAFI_GITHUB_TREND_ENABLED=true` 时 worker 才按今日 30 分钟、本周 2 小时、本月 6 小时抓取。管理员强制采集有 60 秒冷却，并且要和 worker 共用同一个 `AIHOT_DATA_DIR`。本期不做 topics 分类和模型分类，类别显示「待确认」。排除 `vercel-labs/agent-desktop` 与 `thedotmack/claude-mem`。Cloudflare 迁移边界见 [部署文档](deploy.md) 2026-11-07 一节。
+`/github-trending` 读 GitHub 趋势页的期间新增星数，不是全站榜，也不是模型榜。导航放在「AA 模型榜」下面，只是沿用「模型」这一段的位置。`GET` 只读 `{dataDir}/mafi-readers/github-trending.json`。`MAFI_GITHUB_TREND_ENABLED=true` 时 worker 才按今日 30 分钟、本周 2 小时、本月 6 小时抓取。管理员强制采集有 60 秒冷却，并且要和 worker 共用同一个 `AIHOT_DATA_DIR`。类别用 GitHub topics 对静态规则：只命中一类才标 Agent/AI、开发工具或基础设施；多类或规则对不上标未分类；还没取到标待确认。topics 缓存 7 天，过期的优先补查，每小时最多 10 次，并看响应头剩余额度。失败不挡住趋势列表。不做模型分类。排除 `vercel-labs/agent-desktop` 与 `thedotmack/claude-mem`。Cloudflare 迁移边界见 [部署文档](deploy.md) 2026-11-07 一节。
 
 ## 更新与本机边界
 

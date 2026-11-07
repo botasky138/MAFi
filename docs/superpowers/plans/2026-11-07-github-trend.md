@@ -9,7 +9,7 @@
 - `GET` 只读缓存。worker 在开关为 `true` 时每 30 分钟检查；daily 30 分钟、weekly 2 小时、monthly 6 小时才抓。失败或快照超龄为 `stale`，`nextRefreshAt` 只是计划。
 - 管理员 `POST /api/admin/mafi-readers/github-trending/refresh`：会话 + CSRF，60 秒冷却，与定时任务抢同一 dataDir 上的锁；死进程可夺锁。
 - 解析、存储、抓取、调度分成函数，实现仍是本机文件与进程 cron。文档写明 Cloudflare 仅反代可以沿用，Workers/Pages 不能直接部署。
-- 不做 topics 规则、不做模型分类。类别保持「待确认」。不启用 `web-github-trending`。
+- 一期用 GitHub topics 对静态规则。多类冲突为未分类，没取到为待确认。7 天缓存，每小时最多 10 次，过期的优先补。失败不挡榜。不做模型。不启用 `web-github-trending`。
 - 导航在「AA 模型榜」下，段名只是位置。页内近黑、冷灰金属边、香槟金，无巨型 hero，遵守减少动态效果。
 
 ## 顺序
