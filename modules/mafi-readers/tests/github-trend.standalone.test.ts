@@ -352,6 +352,25 @@ test("GitHub's frequent 504s are tried four times, and a failed window is tried 
   await rm(directory, { recursive: true, force: true });
 });
 
+test("the admin's forced refresh never calls the model; the worker's tick does", async () => {
+  const directory = await dir();
+  const described: string[] = [];
+  const describe = async (input: PurposeInput) => { described.push(input.fullName); return { purpose: "用途", category: "agent" as const, secondary: null, model: "fake" }; };
+  const server = createReaderServer(undefined, {
+    dir: directory, now: () => AT, fetch: pages(card("acme/tool", "5 stars today", "9")), repoFetch: async () => repoReply(10),
+    hasToken: () => true, describe, enabled: () => true, authenticate: async () => ({ csrf: "t" }),
+  });
+  const app = Fastify();
+  server.http!(app);
+  const forced = await app.inject({ method: "POST", url: "/api/admin/mafi-readers/github-trending/refresh", headers: { "x-csrf-token": "t" } });
+  assert.equal(forced.statusCode, 200);
+  assert.equal(described.length, 0);
+  await server.schedules![0]!.run();
+  assert.equal(described.includes("acme/tool"), true);
+  await app.close();
+  await rm(directory, { recursive: true, force: true });
+});
+
 test("a live lock refuses a second refresh and the GET route does not fetch", async () => {
   const directory = await dir();
   let release: (() => void) | null = null;

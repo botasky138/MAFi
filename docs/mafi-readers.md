@@ -33,7 +33,7 @@ AA key 只保存在被 Git 忽略的本机 .env 中，变量为 AA_API_KEY。示
 - **精选**：每个榜按期间星数取前三，跳过「常驻」。徽章：新星（创建不到 30 天）、爆发（这一期新增占累计三分之一以上）、常驻（连续 3 天以上在日榜）、三榜（同时在今日、本周、本月榜）。
 - **排除名单**：`trend-config.ts`，现在为空。
 
-`GET` 只读 `{dataDir}/mafi-readers/` 下的 `github-trending.json` 和 `github-repos.json`；采集只在 `MAFI_GITHUB_TREND_ENABLED=true` 的 worker 里跑。管理员强制采集（`POST /api/admin/mafi-readers/github-trending/refresh`，要登录和 CSRF）有 60 秒冷却。Cloudflare 迁移边界见 [部署文档](deploy.md) 2026-11-09 一节。
+`GET` 只读 `{dataDir}/mafi-readers/` 下的 `github-trending.json` 和 `github-repos.json`；采集只在 `MAFI_GITHUB_TREND_ENABLED=true` 的 worker 里跑。管理员强制采集（`POST /api/admin/mafi-readers/github-trending/refresh`，要登录和 CSRF）有 60 秒冷却，只抓榜单和星数、不调用模型，中文用途由下一轮 worker 写。Cloudflare 迁移边界见 [部署文档](deploy.md) 2026-11-09 一节。
 
 ## 更新与本机边界
 

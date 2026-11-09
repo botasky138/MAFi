@@ -117,9 +117,11 @@ export function createReaderServer(readers?: Readers, trend?: Partial<TrendContr
     store: new FileReaderStore(path.join(config.dataDir, "mafi-readers")),
     codexEnabled: codexResetEnabled,
   });
+  // The admin's forced run is an API request: it fetches lists and stars, and leaves the purpose lines to
+  // the worker's next tick, since models are called only in worker jobs.
   const io = (mode: "due" | "force") => ({
     dir: controls.dir, now: controls.now, fetch: controls.fetch, repoFetch: controls.repoFetch, hasToken: controls.hasToken(),
-    describe: controls.describe, enabled: controls.enabled(), mode,
+    describe: mode === "due" ? controls.describe : undefined, enabled: controls.enabled(), mode,
   });
   return {
     name: "mafi-readers",
