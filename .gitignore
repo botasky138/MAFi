@@ -23,3 +23,8 @@ fontsource-noto-sans-sc-*.tgz
 output/
 .superpowers-sdd-*
 scripts/_*.mjs
+
+# Local hand-made backups and run logs (e.g. foo.ts.bak-20261102, logs/auto-*.log)
+*.bak-*
+logs/
+gcm-diagnose.log
