@@ -3,7 +3,8 @@
 //   rest back to the button;
 // - a failed page is not offered for retry, or retrying loses the filter;
 // - a reading group disappears because its representative is read, or a fully read one stays;
-// - returning to the list drops the filter, or an ordinary card survives it.
+// - returning to the list drops the filter, or an ordinary card survives it;
+// - opening a reading group marks only its representative, so the group comes back under the filter.
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { chromium, expect, type Browser } from "@playwright/test";
@@ -150,6 +151,25 @@ test("a group stays while any selected report in it is unread, and goes once all
   }
 });
 
+test("opening a reading group marks every selected report in it read, so the filter hides it", async () => {
+  const context = await readerWith([]);
+  const page = await context.newPage();
+  try {
+    await page.goto(`${origin}/?tag=group`);
+    const rep = page.getByRole("link", { name: "代表文章", exact: true });
+    await expect(rep).toBeVisible();
+    await rep.click();
+    await expect(page.getByText("固定正文", { exact: true })).toBeVisible();
+    const stored = JSON.parse((await page.evaluate(() => localStorage.getItem("aihot-read-items"))) ?? "[]") as string[];
+    assert.ok(stored.includes("rep-1") && stored.includes("member-2"), "the representative and its other selected report are read");
+    await page.goBack();
+    await page.getByRole("button", { name: "只看未读" }).click();
+    await expect(page.getByRole("link", { name: "已读完的组", exact: true })).toBeVisible();
+    assert.equal(await page.getByRole("link", { name: "代表文章", exact: true }).count(), 0, "the opened group is hidden");
+  } finally {
+    await context.close();
+  }
+});
 // A group kept for its unread reports must not look read, and opening it shows which reports are
 // still unread (read ones in the same grey as read cards).
 for (const phone of [false, true]) test(`a kept group is not greyed and its ${phone ? "sheet" : "expansion"} marks the unread reports`, async () => {

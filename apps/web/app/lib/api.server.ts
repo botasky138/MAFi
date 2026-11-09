@@ -5,6 +5,9 @@ import { data, redirect, type HeadersArgs } from "react-router";
 import { logError } from "./errors.server.ts";
 
 /** Where the api listens (API_BASE_URL, set by the deployment); development uses the default. */
+/** The reading-preferences device cookie (modules/mafi-preferences DEVICE_COOKIE). */
+const DEVICE_COOKIE_NAME = "mafi_device";
+
 export const API_BASE_URL = process.env.API_BASE_URL || "http://127.0.0.1:3001";
 
 /** An api answer other than 2xx. A merged story answers 308 with the story it now lives in. */
@@ -43,16 +46,38 @@ export async function apiGet<T>(path: string, init?: { signal?: AbortSignal; hea
   }
 }
 
+/** The device cookie a personalized read forwards (`mafi_device=<id>`), or null; never any other cookie. */
+export function deviceCookie(request?: Request): string | null {
+  const raw = request?.headers.get("cookie");
+  if (!raw) return null;
+  for (const part of raw.split(";")) {
+    const i = part.indexOf("=");
+    if (i < 0) continue;
+    if (part.slice(0, i).trim() !== DEVICE_COOKIE_NAME) continue;
+    const value = part.slice(i + 1).trim();
+    return /^[A-Za-z0-9._-]{1,128}$/.test(value) ? `${DEVICE_COOKIE_NAME}=${value}` : null;
+  }
+  return null;
+}
+
 /**
  * Maps API failures to route responses: real 404s, the permanent redirect of a merged page (`merged`
  * gives the page of the id it was merged into), the search-busy page, otherwise 503.
  */
 export async function loadOr404<T>(path: string, opts: { busyRedirect?: string; merged?: (id: string) => string; responseHeaders?: Headers; signal?: AbortSignal; request?: Request } = {}): Promise<T> {
   try {
-    const headers: Record<string, string> = {};
-    const cookie = opts.request?.headers.get("cookie");
-    if (cookie) headers.cookie = cookie;
-    return await apiGet<T>(path, { headers, responseHeaders: opts.responseHeaders, signal: opts.signal });
+    // Only the reading-preferences device cookie reaches the api, and only from loaders that pass their
+    // request (the personalizable reads). Every other cookie (admin_session, ...) stays in the browser.
+    const device = deviceCookie(opts.request);
+    const headers: Record<string, string> = device ? { cookie: device } : {};
+    const result = await apiGet<T>(path, { headers, responseHeaders: opts.responseHeaders, signal: opts.signal });
+    // A read made with a device may be personalized: never let a shared cache keep it.
+    if (device && opts.responseHeaders) {
+      opts.responseHeaders.set("Cache-Control", "private, no-store");
+      opts.responseHeaders.set("X-Accel-Expires", "0");
+      opts.responseHeaders.set("Vary", "Cookie");
+    }
+    return result;
   } catch (error) {
     if (opts.signal?.aborted) throw error;
     if (error instanceof ApiError) {

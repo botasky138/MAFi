@@ -1,5 +1,5 @@
 // Selected news timeline: ordinary reports fold by fact; standalone and independent-source articles
-// keep their own cards. Cards are ordered by publish time (a fact by its earliest selected report), newest first.
+// keep their own cards. Cards are ordered by publish time (a fact by its newest selected report, so a fresh report lifts its card), newest first.
 import type { GroupInfo, TimelineCard, TimelineFilters, TimelineResponse } from "@aihot/contracts/site";
 import { beijingDate, beijingMidnight } from "@aihot/contracts/time";
 import { sql } from "../db.ts";
@@ -105,7 +105,7 @@ export async function queryGroupedAnchors(q: TimelineQuery, now: Date) {
           ) AS rn
         FROM base b LEFT JOIN quota qt ON qt.source_id = b.source_id
       )
-      SELECT gk, min(published_at) AS anchor_at, array_agg(article_id) AS ids FROM ranked
+      SELECT gk, max(published_at) AS anchor_at, array_agg(article_id) AS ids FROM ranked
       WHERE ${base > 0 ? sql`rn <= quota` : sql`true`}
       GROUP BY gk ORDER BY anchor_at DESC NULLS LAST, gk COLLATE "C" DESC`
   ).map((r) => ({ gk: r.gk, anchor: r.anchor_at.getTime(), ids: r.ids }));

@@ -96,7 +96,25 @@ test("HTML and navigation share freshness; cookies do not personalize public res
   assert.equal(plain.headers.get("X-Accel-Expires"), `@${deadline}`);
   assert.equal(signedIn.headers.get("Set-Cookie"), null);
   assert.equal(await signedIn.text(), await plain.text());
-  assert.ok(apiCookies.every((cookie) => !cookie));
+  assert.ok(apiCookies.every((cookie) => !cookie || /^mafi_device=[^;]+$/.test(cookie)));
+});
+
+test("only the mafi_device cookie reaches the api; admin_session never does; device reads stay private", async () => {
+  const device = "0b6f2c1e-4a5d-4c3b-9e2f-1a2b3c4d5e6f";
+  const before = apiCookies.length;
+  const adminOnly = await fetch(`${origin}/`, { headers: { cookie: "admin_session=secret-admin; reader=returning" } });
+  assert.equal(adminOnly.status, 200);
+  await adminOnly.text();
+  const withDevice = await fetch(`${origin}/_.data`, { headers: { cookie: `admin_session=secret-admin; mafi_device=${device}; other=x` } });
+  assert.equal(withDevice.status, 200);
+  assert.equal(withDevice.headers.get("Cache-Control"), "private, no-store");
+  await withDevice.text();
+  const seen = apiCookies.slice(before);
+  assert.ok(seen.length > 0);
+  assert.ok(seen.every((cookie) => !cookie?.includes("admin_session") && !cookie?.includes("other=") && !cookie?.includes("reader=")));
+  assert.ok(seen.every((cookie) => !cookie || cookie === `mafi_device=${device}`));
+  assert.ok(seen.includes(`mafi_device=${device}`));
+  assert.ok(apiCookies.every((cookie) => !cookie?.includes("admin_session")));
 });
 
 test("missing routes cannot be hidden by a root-only request; errors and redirects stay uncached", async () => {

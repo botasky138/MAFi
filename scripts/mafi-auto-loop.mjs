@@ -36,6 +36,9 @@ const repo = process.cwd();
 const once = process.argv.includes("--once") || process.env.MAFI_AUTO_ONCE === "1";
 const COLLECT_MS = Number(process.env.MAFI_AUTO_COLLECT_MS || 10 * 60 * 1000);
 const ANALYZE_MS = Number(process.env.MAFI_AUTO_ANALYZE_MS || 60 * 60 * 1000);
+// A collect run longer than this is killed (whole process tree) so a hang, e.g. a DB socket left dead by
+// sleep/resume, cannot hold the lock and starve analyze. Normal runs finish in about a minute.
+const COLLECT_TIMEOUT_MS = Number(process.env.MAFI_AUTO_COLLECT_TIMEOUT_MS || 8 * 60 * 1000);
 /** Stagger analyze vs collect: both used to fire on the same multiples of 60m, collect won the busy lock, analyze never ran. */
 const ANALYZE_OFFSET_MS = Number(process.env.MAFI_AUTO_ANALYZE_OFFSET_MS || 5 * 60 * 1000);
 const ANALYZE_LIMIT = process.env.MAFI_AUTO_ANALYZE_LIMIT || "12";
@@ -83,7 +86,16 @@ let stopping = false;
 let collectRuns = 0;
 let analyzeRuns = 0;
 
-function runNode(script, args = []) {
+function killTree(pid) {
+  if (!pid) return;
+  if (process.platform === "win32") {
+    try { spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" }); } catch {}
+  } else {
+    try { process.kill(-pid, "SIGKILL"); } catch { try { process.kill(pid, "SIGKILL"); } catch {} }
+  }
+}
+
+function runNode(script, args = [], { timeoutMs = 0 } = {}) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, ["--env-file-if-exists=.env", script, ...args], {
       cwd: repo,
@@ -100,7 +112,16 @@ function runNode(script, args = []) {
     };
     child.stdout.on("data", onChunk);
     child.stderr.on("data", onChunk);
-    child.on("exit", (code, signal) => resolve({ code: code ?? 1, signal, out }));
+    let timedOut = false;
+    const timer = timeoutMs > 0 ? setTimeout(() => {
+      timedOut = true;
+      append("child_timeout_kill", { script, pid: child.pid, timeoutMs });
+      killTree(child.pid);
+    }, timeoutMs) : null;
+    child.on("exit", (code, signal) => {
+      if (timer) clearTimeout(timer);
+      resolve({ code: code ?? 1, signal, out, timedOut });
+    });
   });
 }
 
@@ -110,8 +131,8 @@ async function tickCollect() {
   collectRuns += 1;
   append("collect_tick_begin", { n: collectRuns, modelStack: envBase.MODEL_CALLS_ENABLED });
   try {
-    const r = await runNode("scripts/collect-mafi-auto.mjs");
-    append("collect_tick_end", { n: collectRuns, exit: r.code });
+    const r = await runNode("scripts/collect-mafi-auto.mjs", [], { timeoutMs: COLLECT_TIMEOUT_MS });
+    append("collect_tick_end", { n: collectRuns, exit: r.code, ...(r.timedOut ? { timedOut: true } : {}) });
   } catch (e) {
     append("collect_tick_error", { message: String(e?.message ?? e).slice(0, 300) });
   } finally {

@@ -14,7 +14,7 @@ import { EmptyState } from "../../components/ui/Page";
 import { beijingDate, beijingTime, beijingWeekday, monthDay } from "@aihot/contracts/time";
 import { byBeijingDay, weekdayShort } from "../../lib/format";
 import { isHydrated } from "../../lib/hydration";
-import { markRead, useReadSet } from "../../lib/local-state";
+import { markReadMany, useReadSet } from "../../lib/local-state";
 import { filterParams, listPath } from "../../lib/seo";
 import { fetchTimelineHeadState } from "./preference-refresh";
 import { isReload, readSnapshot, restoreAnchor, saveSnapshot, useSaveOnLeave } from "../../lib/restore";
@@ -152,6 +152,12 @@ export function Timeline({ initial, filters }: { initial: TimelineResponse; filt
   const [loadError, setLoadError] = useState(false);
   const [freshKeys, setFreshKeys] = useState<Set<string>>(() => new Set());
   const stateRef = useRef(state);
+  // Opening a card marks every selected report behind it read, so a read reading group does not
+  // come back under 只看未读 just because another report joined it.
+  const openCard = useCallback((id: string) => {
+    const card = stateRef.current.cards.find((c) => c.item.id === id);
+    markReadMany([id, ...(card?.group?.memberIds ?? [])]);
+  }, []);
   stateRef.current = state;
 
   // Filters (i.e. the loader data) changed. A page still loading for the old filters is cancelled, and a
@@ -367,7 +373,7 @@ export function Timeline({ initial, filters }: { initial: TimelineResponse; filt
                     const delay = fresh ? Math.min(order++, 10) * 40 : 0;
                     return (
                       <TimelineSlot key={c.key} dataKey={c.key} at={c.anchorAt} fresh={fresh} delay={delay}>
-                        <FeedItem item={c.item} group={c.group} filters={filters} read={readSet.has(c.item.id) && !(unreadOnly && unreadVisible(c))} onOpen={markRead} at={c.anchorAt} />
+                        <FeedItem item={c.item} group={c.group} filters={filters} read={readSet.has(c.item.id) && !(unreadOnly && unreadVisible(c))} onOpen={openCard} at={c.anchorAt} />
                       </TimelineSlot>
                     );
                   })}
