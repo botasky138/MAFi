@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from "react";
-import { Link, useRevalidator } from "react-router";
+import { Link, useRevalidator, useRouteLoaderData } from "react-router";
 import { beijingDate, beijingTime } from "@aihot/contracts/time";
 import { IconArrowUpRight } from "@aihot/web/components/icons";
 import type { ReadResult } from "../contracts.ts";
@@ -35,8 +35,6 @@ export function useReaderRefresh(enabled = true, intervalMs = 600_000) {
   }, [enabled, intervalMs, revalidator.revalidate]);
 }
 
-export interface ReaderFlags { codexReset: boolean; githubTrend: boolean }
-
 export function ReaderState<T>({ result }: { result: ReadResult<T> }) {
   if (result.status === "ready") return null;
   return <div role="status" className="mb-5 rounded-card border border-line bg-surface px-4 py-3 text-[13px] leading-[1.8] text-ink-3">
@@ -53,11 +51,13 @@ export function ReaderFooter<T>({ result, name }: { result: ReadResult<T>; name:
   </footer>;
 }
 
-export function ReaderNav({ active, flags, tone = "site" }: { active: "codex" | "aa" | "github"; flags: ReaderFlags; tone?: "site" | "inverse" }) {
+/** The pages' own tabs; the switched ones follow the root loader's flags like the sidebar does. */
+export function ReaderNav({ active, tone = "site" }: { active: "codex" | "aa" | "github"; tone?: "site" | "inverse" }) {
+  const flags = (useRouteLoaderData("root") as { flags?: Record<string, boolean> } | undefined)?.flags ?? {};
   const links = [
     ["aa", "/leaderboard", "AA 模型榜", true],
-    ["github", "/github-trending", "GitHub 趋势", flags.githubTrend],
-    ["codex", "/codex-reset", "Tibo 重置监控", flags.codexReset],
+    ["github", "/github-trending", "GitHub 趋势", flags.githubTrend === true],
+    ["codex", "/codex-reset", "Tibo 重置监控", flags.codexReset === true],
   ] as const;
   const on = tone === "inverse" ? "font-semibold text-[#e8e8ec]" : "font-semibold text-ink";
   const off = tone === "inverse" ? "text-[#9a9aa4] hover:text-[#e8d48b]" : "text-ink-4 hover:text-accent";

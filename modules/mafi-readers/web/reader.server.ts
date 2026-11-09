@@ -13,6 +13,6 @@ export async function readTrend(since: TrendSince, request: Request): Promise<Tr
   const sourceUrl = `https://github.com/trending?since=${since}`;
   return apiGet<TrendWindowResult>(`/api/mafi-readers/github-trending?since=${since}`, { signal: request.signal }).catch(() => ({
     status: "unavailable", since, sourceUrl, fetchedAt: null, attemptedAt: null, nextRefreshAt: null,
-    trigger: null, message: "暂时无法连接数据源，请稍后再看或打开来源页面。", items: [], demo: false,
+    trigger: null, message: "暂时连不上本站后端，稍后再刷新试试。", items: [], demo: false, featured: [], starsAt: null, live: false,
   }));
 }

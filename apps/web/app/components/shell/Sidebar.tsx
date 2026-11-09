@@ -43,7 +43,7 @@ function SideLink({ item, dot }: { item: NavItem; dot: boolean }) {
 
 export function Sidebar({ changelogVersion }: { changelogVersion: string | null }) {
   const dot = useChangelogDot(changelogVersion);
-  const flags = useRouteLoaderData<typeof rootLoader>("root")?.readerFlags;
+  const flags = useRouteLoaderData<typeof rootLoader>("root")?.flags;
   return (
     <aside className="metal-panel sticky top-0 hidden h-dvh w-[180px] shrink-0 flex-col border-r border-line px-3 pb-3.5 pt-6 lg:flex">
       <Link to="/" className="mb-4 flex h-[50px] items-center px-1 text-ink" aria-label={`${SITE.name} 首页`}>

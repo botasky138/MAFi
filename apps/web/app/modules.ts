@@ -121,7 +121,7 @@ export interface WebModule {
   /** Phone tab bar: tabs before 我的. */
   tabs?: Tab[];
   /** The 我的 page: rows ahead of the engine's tools. */
-  tools?: Array<{ to: string; label: string; icon: ReactNode; flag?: "codexReset" | "githubTrend" }>;
+  tools?: Array<{ to: string; label: string; icon: ReactNode; flag?: string }>;
   admin?: {
     /** Navigation groups of its own, ahead of the engine's. */
     groups?: Array<{ group: string; items: AdminNavEntry[] }>;
@@ -142,6 +142,8 @@ export interface WebModule {
     Top?: ComponentType;
     /** After the page. */
     Bottom?: ComponentType;
+    /** Switches read on the server by the root loader; a sidebar item or 我的 row naming one shows only while it is true. */
+    flags?: () => Record<string, boolean>;
     /** Headers the document's own request to the api carries (the root loader). */
     documentHeaders?: (request: Request) => Record<string, string>;
   };

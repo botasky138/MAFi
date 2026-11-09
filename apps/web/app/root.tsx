@@ -36,18 +36,15 @@ export const links: Route.LinksFunction = () => [
 /** The release rendering this document: once a newer one is deployed, a render error reloads the page (entry.client). */
 export async function loader({ request }: Route.LoaderArgs) {
   const release = process.env.AIHOT_RELEASE ?? null;
-  const readerFlags = {
-    codexReset: process.env.MAFI_CODEX_RESET_ENABLED === "true",
-    githubTrend: process.env.MAFI_GITHUB_TREND_ENABLED === "true",
-  };
+  const flags: Record<string, boolean> = Object.assign({}, ...webModules().map((m) => m.root?.flags?.() ?? {}));
   try {
     const meta = await apiGet<SiteMeta>("/api/site/meta", {
       headers: Object.assign({}, ...webModules().map((m) => m.root?.documentHeaders?.(request) ?? {})),
       signal: request.signal,
     });
-    return { ...meta, release, readerFlags };
+    return { ...meta, release, flags };
   } catch {
-    return { changelogVersion: null, release, readerFlags };
+    return { changelogVersion: null, release, flags };
   }
 }
 

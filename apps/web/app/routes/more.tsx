@@ -29,7 +29,7 @@ export function meta() {
  * "我的", the phone's last tab (the address stays /more): this browser's bookmarks and appearance first,
  * then the tools, then the site's own pages.
  */
-type Row = { to: string; label: string; icon: ReactNode; detail?: ReactNode; flag?: "codexReset" | "githubTrend" };
+type Row = { to: string; label: string; icon: ReactNode; detail?: ReactNode; flag?: string };
 
 /** The ways in that the agent page offers, the modules' first; its row names the first three. */
 const agentWays = () => [...webModules().flatMap((m) => m.agentWays ?? []), "MCP", "RSS", "API"];
@@ -68,7 +68,7 @@ function RowLink({ row, dot = false }: { row: Row; dot?: boolean }) {
 
 export default function MorePage() {
   const root = useRouteLoaderData<typeof rootLoader>("root");
-  const readerFlags = root?.readerFlags;
+  const flags = root?.flags;
   const changelogDot = useChangelogDot(root?.changelogVersion ?? null);
   const starred = useStarred();
   const font = useFontPreference();
@@ -99,7 +99,7 @@ export default function MorePage() {
           </li>
         </Group>
         <Group title="工具与入口">
-          {tools().filter((row) => !row.flag || readerFlags?.[row.flag] === true).map((r) => (
+          {tools().filter((row) => !row.flag || flags?.[row.flag] === true).map((r) => (
             <RowLink key={r.to} row={r} />
           ))}
         </Group>
