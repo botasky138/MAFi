@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Link, useLocation } from "react-router";
+import { Link, useLocation, useRouteLoaderData } from "react-router";
+import type { loader as rootLoader } from "../../root";
 import { IntentLink } from "../ui/IntentLink";
 import { SITE } from "@aihot/site";
 import { Wordmark } from "@aihot/site/brand/Logo.tsx";
@@ -42,6 +43,7 @@ function SideLink({ item, dot }: { item: NavItem; dot: boolean }) {
 
 export function Sidebar({ changelogVersion }: { changelogVersion: string | null }) {
   const dot = useChangelogDot(changelogVersion);
+  const flags = useRouteLoaderData<typeof rootLoader>("root")?.flags;
   return (
     <aside className="metal-panel sticky top-0 hidden h-dvh w-[180px] shrink-0 flex-col border-r border-line px-3 pb-3.5 pt-6 lg:flex">
       <Link to="/" className="mb-4 flex h-[50px] items-center px-1 text-ink" aria-label={`${SITE.name} 首页`}>
@@ -52,7 +54,7 @@ export function Sidebar({ changelogVersion }: { changelogVersion: string | null 
           <div key={section.title}>
             <div className="px-2.5 pb-1 pt-3.5 text-[11px] text-ink-4">{section.title}</div>
             <div className="flex flex-col gap-1">
-              {section.items.map((item) => (
+              {section.items.filter((item) => !item.flag || flags?.[item.flag] === true).map((item) => (
                 <SideLink key={item.to} item={item} dot={dot} />
               ))}
             </div>

@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from "react";
-import { Link, useRevalidator } from "react-router";
+import { Link, useRevalidator, useRouteLoaderData } from "react-router";
 import { beijingDate, beijingTime } from "@aihot/contracts/time";
 import { IconArrowUpRight } from "@aihot/web/components/icons";
 import type { ReadResult } from "../contracts.ts";
@@ -24,14 +24,15 @@ export function SourceLink({ href, children, className = "" }: { href: string | 
 }
 
 /** A page in the foreground checks again; the backend also enforces each source's minimum interval. */
-export function useReaderRefresh() {
+export function useReaderRefresh(enabled = true, intervalMs = 600_000) {
   const revalidator = useRevalidator();
   useEffect(() => {
+    if (!enabled) return;
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible") void revalidator.revalidate();
-    }, 600_000);
+    }, intervalMs);
     return () => window.clearInterval(timer);
-  }, [revalidator.revalidate]);
+  }, [enabled, intervalMs, revalidator.revalidate]);
 }
 
 export function ReaderState<T>({ result }: { result: ReadResult<T> }) {
@@ -50,11 +51,18 @@ export function ReaderFooter<T>({ result, name }: { result: ReadResult<T>; name:
   </footer>;
 }
 
-export function ReaderNav({ active }: { active: "codex" | "aa" }) {
-  return <nav aria-label="外部观察" className="mb-6 flex flex-wrap gap-x-6 gap-y-2 border-b border-line pb-3 text-[13px]">
-    {([
-      ["aa", "/leaderboard", "AA 模型榜"],
-      ["codex", "/codex-reset", "Tibo 重置监控"],
-    ] as const).map(([key, to, label]) => <Link key={key} to={to} aria-current={active === key ? "page" : undefined} className={active === key ? "font-semibold text-ink" : "text-ink-4 hover:text-accent"}>{label}</Link>)}
+/** The pages' own tabs; the switched ones follow the root loader's flags like the sidebar does. */
+export function ReaderNav({ active, tone = "site" }: { active: "codex" | "aa" | "github"; tone?: "site" | "inverse" }) {
+  const flags = (useRouteLoaderData("root") as { flags?: Record<string, boolean> } | undefined)?.flags ?? {};
+  const links = [
+    ["aa", "/leaderboard", "AA 模型榜", true],
+    ["github", "/github-trending", "GitHub 趋势", flags.githubTrend === true],
+    ["codex", "/codex-reset", "Tibo 重置监控", flags.codexReset === true],
+  ] as const;
+  const on = tone === "inverse" ? "font-semibold text-[#e8e8ec]" : "font-semibold text-ink";
+  const off = tone === "inverse" ? "text-[#9a9aa4] hover:text-[#e8d48b]" : "text-ink-4 hover:text-accent";
+  const rule = tone === "inverse" ? "border-[#3a3a40]" : "border-line";
+  return <nav aria-label="外部观察" className={`mb-6 flex flex-wrap gap-x-6 gap-y-2 border-b pb-3 text-[13px] ${rule}`}>
+    {links.filter(([, , , shown]) => shown).map(([key, to, label]) => <Link key={key} to={to} aria-current={active === key ? "page" : undefined} className={active === key ? on : off}>{label}</Link>)}
   </nav>;
 }

@@ -15,6 +15,8 @@ export interface NavItem {
   end?: boolean;
   /** Shows the unread dot while the changelog has news. */
   changelog?: boolean;
+  /** Hidden unless a web module's root.flags reports this flag as true. Entries without one stay visible. */
+  flag?: string;
 }
 
 const SECTIONS: Array<{ title: string; items: NavItem[] }> = [

@@ -1,4 +1,37 @@
 # MAFi 更新日志
+## 2026-11-09 14:47（北京时间）GitHub 趋势：实时星数、中文用途、精选与常驻；修正刷新节奏；Tibo 暂停沿用（eee0684, cc1d70b, b54942c）
+
+功能提交时间 2026-11-09 14:47:36（eee0684、cc1d70b）与 14:49:23（b54942c），北京时间。替代 11-07 两条的 topics 分类与 30 分钟定时；那两条从未合并上线。
+
+- 刷新节奏：11-07 版把下次刷新时间记成「抓完时刻 + 间隔」，总比下一个定时晚几秒，实测今日 / 本周 / 本月实际 60 / 150 / 390 分钟才刷新，今日榜一半时间显示过期。改为 worker 每 5 分钟一次、到期判断留 2 分钟余量，超过间隔 15 分钟才算过期；回归测试模拟 6 小时。
+- GitHub 趋势页约一半请求返回 504（11-09 实测，每次不到 1 秒）：每页最多试 4 次（间隔 2/4/8 秒），失败的窗口 10 分钟后再试，不再等一整个窗口。
+- 实时星数：每次从 GitHub API 读上榜仓库的累计星数（有 `GITHUB_TOKEN` 全部读，没有每小时约 40 次），存 26 小时，算近 1 小时增量和 24 小时曲线；限流时停到 GitHub 的重置时间。顺带拿 topics 和创建时间，替换 11-07 版单独的 topics 调用（未上线，无旧数据要清）。
+- 中文用途：新模型步骤 `githubPurpose`（`GITHUB_PURPOSE_MODEL`），worker 里经回执和预算熔断调用，每次最多 6 个、精选优先；描述或 topics 不变不重写，失败 1 小时后重试，模型调用关闭时跳过。九个类别，主类 + 次类；模型没写到时按规则分类。
+- 精选：每榜期间星数前三，跳过「常驻」（连续 3 天以上在日榜）。徽章：新星、爆发、常驻、三榜。
+- 排除名单移到 `modules/mafi-readers/trend-config.ts` 并清空：核查后 agent-desktop（约 2 万星）与 claude-mem（约 11.5 万星）都是活跃的真实项目，只是当时霸榜，改由「常驻」规则让出精选位。
+- 页面：精选三卡、榜单、类别 / 语言筛选、实时标记；浏览器记住上次看到的累计星数，刷新后显示「较上次 +N」并播放「+N ★」，减少动态效果时只显示文字；手机上数字放到每行底部。
+- 导航开关通用化：模块用 `root.flags` 报告开关，root loader 不再读 `MAFI_*`；「我的」增加 GitHub 趋势入口（开关打开时）。
+- `.env.example`：GitHub 趋势与 token 说明合并到一处；补上代码在读但模板缺的 4 个 `MAFI_*`。
+- 回滚：`git revert b54942c cc1d70b eee0684`；只关趋势页：`MAFI_GITHUB_TREND_ENABLED` 不设为 `true` 并重启 API、worker、Web。
+
+## 2026-11-07 21:10（北京时间 Asia/Shanghai）趋势页按 GitHub topics 分类（4e7f4e4788189bf59c3e5bed908a6487a6610111）
+
+功能提交时间 `2026-11-07T13:10:04+00:00`，换算为北京时间 2026-11-07 21:10:04。
+
+- 趋势条目用 GitHub topics 对静态规则。只命中一类才标 Agent/AI、开发工具或基础设施；多类或规则对不上标未分类；还没取到标待确认。
+- topics 缓存 7 天。过期记录排在从未查过的仓库前面，避免每小时 10 次额度被新仓库占满后旧记录不再更新。`x-ratelimit-remaining` 低于 10 时停到重置时刻，不把这次失败记成 7 天有效缓存。失败不挡住趋势列表。不做模型分类。
+- 管理员 60 秒冷却从采集结束再计，写在共享快照里。`Retry-After` 接受秒数和 HTTP 日期。锁文件记下进程启动时间，避免容器里 PID 1 把别人的死锁当成还活着。
+- 回滚这一笔：`git revert 4e7f4e4788189bf59c3e5bed908a6487a6610111`。
+
+## 2026-11-07 20:53（北京时间 Asia/Shanghai）GitHub 趋势专页，Tibo 默认暂停（b2fdc584aa44f8cc982bea95e7bb42ea38543866）
+
+功能提交时间 `2026-11-07T12:53:53+00:00`，换算为北京时间 2026-11-07 20:53:53。本条不把随后的日志提交 SHA 当作功能 SHA。
+
+- `MAFI_CODEX_RESET_ENABLED` 只有小写 `true` 才恢复 Tibo 上游请求。默认暂停：路由和代码保留，上游 0 次、缓存 0 写入。AA 模型榜不受影响。恢复要重启 API 与 Web。
+- `/github-trending` 按 GitHub Trending 的期间新增星数降序。排除 `vercel-labs/agent-desktop` 与 `thedotmack/claude-mem`。读者刷新只读缓存。`MAFI_GITHUB_TREND_ENABLED=true` 时 worker 按今日 30 分钟、本周 2 小时、本月 6 小时采集。管理员强制采集有 60 秒冷却，并要求 API 与 worker 共用同一个 `AIHOT_DATA_DIR`。
+- 本期不做 topics 规则和模型分类。Cloudflare 仅反代与 Workers/Pages 的差别写在 `docs/deploy.md`。
+- 回滚代码：`git revert b2fdc584aa44f8cc982bea95e7bb42ea38543866`。只暂停 Tibo：变量保持不是 `true`。恢复监控：设为 `true` 并重启 API 与 Web。关掉趋势：`MAFI_GITHUB_TREND_ENABLED` 改为不是 `true`，重启 API、worker 与 Web。
+
 ## 2026-11-02 10:34 SSR 只转发 mafi_device Cookie（9854db9, a400551）
 - apps/web/app/lib/api.server.ts：loadOr404 不再转发整段 Cookie，只解析并转发 mafi_device（仅限传入 request 的个性化 loader：首页/热榜/条目），admin_session 等其他 Cookie 一律不到 API。
 - 带设备标识的读取在网页侧强制 Cache-Control: private, no-store、X-Accel-Expires: 0（loader 也写了 Vary: Cookie，但 server.ts 写最终响应头时不保留，实测线上响应无 Vary）；无设备的公共读取保持 public 缓存、无个性化。

@@ -69,7 +69,7 @@ function Calendar({ events, today }: { events: CodexEvent[]; today: string }) {
 
 export default function CodexResetPage() {
   const { result, now } = useLoaderData<typeof loader>();
-  useReaderRefresh();
+  useReaderRefresh(result.status !== "paused");
   const codex = result.data;
   const today = codex?.today ?? beijingDate(now);
   const featured = pickFeaturedCodexEvent(codex?.events);
