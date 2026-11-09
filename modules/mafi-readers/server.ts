@@ -5,13 +5,17 @@ import { guardedFetch } from "@aihot/backend/lib/http-fetch";
 import { codexResetEnabled, githubTrendEnabled } from "./flags.ts";
 import { FileReaderStore } from "./backend/cache.ts";
 import { createReaders, type Readers } from "./backend/readers.ts";
-import { isTrendSince, readGithubTrend, refreshGithubTrend, type TopicFetchResult, type TrendFetchResult, type TrendSince } from "./backend/github-trend.ts";
+import { isTrendSince, readGithubTrend, refreshGithubTrend, type TrendFetchResult } from "./backend/github-trend.ts";
+import type { PurposeInput, PurposeOutput, RepoFetchResult } from "./backend/github-repos.ts";
+import { PURPOSE_RECEIPT } from "./backend/github-purpose.ts";
 
 export interface TrendControls {
   dir: string;
   now: () => number;
   fetch: (url: string) => Promise<TrendFetchResult>;
-  topicFetch?: (fullName: string) => Promise<TopicFetchResult>;
+  repoFetch?: (fullName: string) => Promise<RepoFetchResult>;
+  hasToken: () => boolean;
+  describe?: (input: PurposeInput) => Promise<PurposeOutput>;
   enabled: () => boolean;
   authenticate: (cookie: string | undefined) => Promise<{ csrf: string } | null>;
 }
@@ -33,32 +37,54 @@ async function fetchTrending(url: string): Promise<TrendFetchResult> {
   return { status: response.status, body: response.text(), retryAfter: response.headers.get("retry-after") };
 }
 
-async function fetchTopics(fullName: string): Promise<TopicFetchResult> {
+function githubToken(): string | null {
+  return process.env.GITHUB_TOKEN?.trim() || null;
+}
+
+/** One repo from the GitHub API: the live star count and what the page shows about it. The token never leaves this request. */
+async function fetchRepo(fullName: string): Promise<RepoFetchResult> {
   const [owner, repo] = fullName.split("/");
   if (!owner || !repo || owner === "." || owner === ".." || repo === "." || repo === "..") throw new Error("Invalid repository");
-  const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/topics`;
-  const headers: Record<string, string> = { accept: "application/vnd.github+json", "user-agent": "mafi-readers" };
-  const token = process.env.GITHUB_TOKEN?.trim();
+  const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+  const headers: Record<string, string> = { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28", "user-agent": "mafi-readers" };
+  const token = githubToken();
   if (token) headers.authorization = `Bearer ${token}`;
   const response = await guardedFetch(url, { method: "GET", timeoutMs: 15_000, maxBytes: 1_000_000, maxRedirects: 0, headers });
-  const remaining = Number(response.headers.get("x-ratelimit-remaining"));
-  const reset = Number(response.headers.get("x-ratelimit-reset"));
-  let topics: string[] | null = null;
+  const remaining = Number(response.headers.get("x-ratelimit-remaining") ?? NaN);
+  const reset = Number(response.headers.get("x-ratelimit-reset") ?? NaN);
+  let found: RepoFetchResult["repo"] = null;
   if (response.status === 200) {
     try {
-      const parsed = JSON.parse(response.text()) as { names?: unknown };
-      topics = Array.isArray(parsed.names) ? parsed.names.filter((name): name is string => typeof name === "string") : [];
+      const data = JSON.parse(response.text()) as Record<string, unknown>;
+      const stars = data.stargazers_count;
+      if (typeof stars === "number" && Number.isSafeInteger(stars) && stars >= 0) {
+        found = {
+          stars,
+          meta: {
+            description: typeof data.description === "string" ? data.description : "",
+            topics: Array.isArray(data.topics) ? data.topics.filter((topic): topic is string => typeof topic === "string") : [],
+            language: typeof data.language === "string" ? data.language : null,
+            createdAt: typeof data.created_at === "string" ? data.created_at : null,
+            homepage: typeof data.homepage === "string" && /^https?:\/\//.test(data.homepage) ? data.homepage : null,
+            archived: data.archived === true,
+          },
+        };
+      }
     } catch {
-      topics = null;
+      found = null;
     }
   }
   return {
     status: response.status,
-    topics,
-    retryAfter: response.headers.get("retry-after"),
+    repo: found,
     remaining: Number.isFinite(remaining) ? remaining : null,
     resetAt: Number.isFinite(reset) ? reset * 1000 : null,
   };
+}
+
+async function describe(input: PurposeInput): Promise<PurposeOutput> {
+  const { describeWithModel } = await import("./backend/github-purpose.ts");
+  return describeWithModel(input);
 }
 
 async function defaultAuthenticate(cookie: string | undefined): Promise<{ csrf: string } | null> {
@@ -72,7 +98,10 @@ function trendControls(partial?: Partial<TrendControls>): TrendControls {
     dir: partial?.dir ?? path.join(config.dataDir, "mafi-readers"),
     now: partial?.now ?? Date.now,
     fetch: partial?.fetch ?? fetchTrending,
-    topicFetch: partial ? partial.topicFetch : fetchTopics,
+    // Tests pass their own; leaving one out there means "no GitHub API" and "no model", never the real ones.
+    repoFetch: partial ? partial.repoFetch : fetchRepo,
+    hasToken: partial?.hasToken ?? (() => githubToken() !== null),
+    describe: partial ? partial.describe : describe,
     enabled: partial?.enabled ?? githubTrendEnabled,
     authenticate: partial?.authenticate ?? defaultAuthenticate,
   };
@@ -88,12 +117,19 @@ export function createReaderServer(readers?: Readers, trend?: Partial<TrendContr
     store: new FileReaderStore(path.join(config.dataDir, "mafi-readers")),
     codexEnabled: codexResetEnabled,
   });
-  const io = (mode: "due" | "force") => ({ dir: controls.dir, now: controls.now, fetch: controls.fetch, topicFetch: controls.topicFetch, enabled: controls.enabled(), mode });
+  const io = (mode: "due" | "force") => ({
+    dir: controls.dir, now: controls.now, fetch: controls.fetch, repoFetch: controls.repoFetch, hasToken: controls.hasToken(),
+    describe: controls.describe, enabled: controls.enabled(), mode,
+  });
   return {
     name: "mafi-readers",
+    models: {
+      githubPurpose: { label: "GitHub 趋势用途（给上榜仓库写一句中文用途并归类）", env: "GITHUB_PURPOSE_MODEL", purposes: [PURPOSE_RECEIPT] },
+    },
+    // Every 5 minutes: live stars each tick; the trending pages only when their window is due.
     schedules: [{
       name: "readers.github-trend",
-      cron: "*/30 * * * *",
+      cron: "*/5 * * * *",
       when: githubTrendEnabled,
       run: () => refreshGithubTrend(io("due")),
     }],

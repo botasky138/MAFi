@@ -4,7 +4,6 @@ import type { Screen } from "@aihot/web/components/shell/screens";
 import { EmptyState } from "@aihot/web/components/ui/Page";
 import { pageMeta } from "@aihot/web/lib/seo";
 import type { AaData, AaModel } from "../contracts.ts";
-import { codexResetEnabled, githubTrendEnabled } from "../flags.ts";
 import { PRIVATE_HEADERS, ReaderFooter, ReaderNav, ReaderState, SourceLink, useReaderRefresh } from "./common.tsx";
 import { readPage } from "./reader.server.ts";
 import {
@@ -30,10 +29,7 @@ export const headers = () => PRIVATE_HEADERS;
 export const meta = () => pageMeta({ title: "AA 模型榜", description: "Artificial Analysis 官方模型评测指标与榜单入口。", path: "/leaderboard", noindex: true });
 
 export async function loader({ request }: { request: Request }) {
-  return data({
-    result: await readPage<AaData>("/api/mafi-readers/aa-models", "https://artificialanalysis.ai/zh", request),
-    flags: { codexReset: codexResetEnabled(), githubTrend: githubTrendEnabled() },
-  }, { headers: PRIVATE_HEADERS });
+  return data({ result: await readPage<AaData>("/api/mafi-readers/aa-models", "https://artificialanalysis.ai/zh", request) }, { headers: PRIVATE_HEADERS });
 }
 
 const number = (value: number | null | undefined, digits = 1) => value == null ? "—" : value.toLocaleString("en-US", { maximumFractionDigits: digits });
@@ -119,7 +115,7 @@ function writeStoredPrefs(prefs: Parameters<typeof serializeAaLeaderboardPrefs>[
 }
 
 export default function AaModels() {
-  const { result, flags } = useLoaderData<typeof loader>();
+  const { result } = useLoaderData<typeof loader>();
   const [modelIds, setModelIds] = useState<string[]>([]);
   const [reasoningKinds, setReasoningKinds] = useState<ReasoningKind[]>([]);
   const [sort, setSort] = useState<AaSortKey>("intelligence");
@@ -171,7 +167,7 @@ export default function AaModels() {
   const chartRows = useMemo(() => topByIntelligence(filtered, topN), [filtered, topN]);
 
   return <div className="pb-8 pt-4 lg:pt-0">
-    <ReaderNav active="aa" flags={flags} />
+    <ReaderNav active="aa" />
     <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
       <div>
         <h1 className="text-[24px] font-semibold leading-[1.3] text-ink">AA 模型榜</h1>

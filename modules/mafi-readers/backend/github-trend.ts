@@ -2,7 +2,12 @@ import { readFileSync } from "node:fs";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { FileReaderStore } from "./cache.ts";
-import { isTrendSince, type TrendCategory, type TrendItem, type TrendSince, type TrendWindowResult } from "../trend-contract.ts";
+import { EXCLUDED_REPOS } from "../trend-config.ts";
+import { isTrendSince, type TrendItem, type TrendSince, type TrendWindowResult } from "../trend-contract.ts";
+import {
+  decorateList, describeRepos, loadRepos, noteListed, pollRepos, saveRepos,
+  type PurposeInput, type PurposeOutput, type RepoFetchResult,
+} from "./github-repos.ts";
 
 export type { TrendItem, TrendSince, TrendWindowResult };
 export { isTrendSince };
@@ -17,16 +22,20 @@ const SOURCE: Record<TrendSince, string> = {
   weekly: "https://github.com/trending?since=weekly",
   monthly: "https://github.com/trending?since=monthly",
 };
-const EXCLUDED = new Set(["vercel-labs/agent-desktop", "thedotmack/claude-mem"]);
+const EXCLUDED = new Set(EXCLUDED_REPOS.map((name) => name.toLowerCase()));
 const LOCK_MS = 180_000;
 const FORCE_COOLDOWN_MS = 60_000;
-const TOPIC_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const TOPIC_HOUR_BUDGET = 10;
-const TOPIC_RULES: Record<"agent" | "devtools" | "infra", ReadonlySet<string>> = {
-  agent: new Set(["agent", "agents", "ai-agent", "llm", "llm-agent", "autonomous-agents", "coding-agent"]),
-  devtools: new Set(["developer-tools", "devtools", "cli", "command-line"]),
-  infra: new Set(["infrastructure", "kubernetes", "devops", "observability", "platform-engineering"]),
-};
+/**
+ * The worker checks every 5 minutes. nextRefreshAt is the finish time plus the window, a few seconds after
+ * the matching tick, so without this slack every window waited a whole extra tick (30 min ran hourly).
+ */
+const DUE_SLACK_MS = 2 * 60 * 1000;
+/** A snapshot is stale only when it missed its window by more than a few ticks. */
+const STALE_GRACE_MS = 15 * 60 * 1000;
+/** A window whose page failed is tried again after this (or its own interval, if shorter), not a whole window later. */
+const FAILED_RETRY_MS = 10 * 60 * 1000;
+/** Stars count as live while the last poll is this recent. */
+const LIVE_MS = 20 * 60 * 1000;
 const SINCE: TrendSince[] = ["daily", "weekly", "monthly"];
 
 export interface ParseResult {
@@ -52,30 +61,20 @@ interface Envelope {
 }
 
 export interface TrendFetchResult { status: number; body: string; retryAfter: string | null }
-export interface TopicFetchResult {
-  status: number;
-  topics: string[] | null;
-  retryAfter: string | null;
-  remaining: number | null;
-  resetAt: number | null;
-}
 export interface TrendIO {
   dir: string;
   now: () => number;
   enabled: boolean;
   fetch: (url: string) => Promise<TrendFetchResult>;
-  /** Absent in tests that only exercise HTML. Production supplies the GitHub topics API. */
-  topicFetch?: (fullName: string) => Promise<TopicFetchResult>;
+  /** The GitHub repos API (live stars, topics, creation date). Absent in tests that only exercise HTML. */
+  repoFetch?: (fullName: string) => Promise<RepoFetchResult>;
+  /** GITHUB_TOKEN is set: poll every listed repo each run instead of about 40 an hour. */
+  hasToken?: boolean;
+  /** Waits between attempts at a trending page; tests pass one that returns at once. */
+  sleep?: (ms: number) => Promise<void>;
+  /** Writes the purpose line (the worker's model step). Absent in the API process and in HTML-only tests. */
+  describe?: (input: PurposeInput) => Promise<PurposeOutput>;
   mode: "due" | "force";
-}
-
-interface TopicRepo { topics: string[] | null; fetchedAt: string | null }
-interface TopicState {
-  version: 1;
-  hourStart: number;
-  used: number;
-  pauseUntil: number | null;
-  repos: Record<string, TopicRepo>;
 }
 
 function blank(since: TrendSince): StoredWindow {
@@ -111,18 +110,25 @@ export function parseTrendingHtml(html: string, since: TrendSince): ParseResult 
     const totalMarkup = chunk.match(new RegExp(`href="/${link[1]}/${link[2]}/stargazers"[^>]*>([\\s\\S]*?)</a>`));
     const totalText = totalMarkup ? totalMarkup[1]?.replace(/<[^>]+>/g, " ") : "";
     const totalFound = totalText?.match(/[\d,]+/);
-    const description = chunk.match(/<p class="col-9[^"]*"[^>]*>\s*([^<]*?)\s*<\/p>/);
+    // The description may hold links (<a>) and emoji markup; keep its text.
+    const description = chunk.match(/<p class="col-9[^"]*"[^>]*>([\s\S]*?)<\/p>/);
     const language = chunk.match(/itemprop="programmingLanguage">\s*([^<]+?)\s*</);
     withPeriod.push({
       fullName,
       url: `https://github.com/${fullName}`,
-      description: decode(description?.[1] ?? ""),
+      description: decode((description?.[1] ?? "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ")),
       language: language?.[1] ? decode(language[1]) : null,
       starsTotal: totalFound ? integer(totalFound[0]) : null,
       starsPeriod,
       periodText: `${period[1]} stars ${period[2]}`,
-      category: "pending",
+      starsHour: null,
+      spark: [],
+      category: "other",
+      secondary: null,
+      purpose: null,
       topics: null,
+      createdAt: null,
+      badges: [],
     });
   }
   return { rawCards: chunks.length, withPeriod };
@@ -136,28 +142,22 @@ export function sortByPeriod(items: readonly TrendItem[]): TrendItem[] {
   return [...items].sort((a, b) => b.starsPeriod - a.starsPeriod || a.fullName.localeCompare(b.fullName));
 }
 
-/** topics 为 null 表示还没取到。空数组或有 topic 但无法唯一归类，都是未分类。 */
-export function classifyTopics(topics: readonly string[] | null): TrendCategory {
-  if (topics == null) return "pending";
-  const hits = new Set<TrendCategory>();
-  for (const raw of topics) {
-    const topic = raw.toLowerCase();
-    for (const [category, words] of Object.entries(TOPIC_RULES) as Array<["agent" | "devtools" | "infra", ReadonlySet<string>]>) {
-      if (words.has(topic)) hits.add(category);
-    }
-  }
-  if (hits.size === 1) return [...hits][0]!;
-  return "unclassified";
-}
-
 function keptItem(value: unknown): TrendItem | null {
   if (!value || typeof value !== "object") return null;
   const item = value as TrendItem;
   if (typeof item.fullName !== "string" || !item.fullName.includes("/")) return null;
   if (typeof item.starsPeriod !== "number" || !Number.isSafeInteger(item.starsPeriod) || item.starsPeriod < 0) return null;
   if (item.starsTotal !== null && (typeof item.starsTotal !== "number" || !Number.isSafeInteger(item.starsTotal))) return null;
-  const topics = Array.isArray(item.topics) ? item.topics.filter((topic) => typeof topic === "string") : null;
-  return { ...item, topics, category: classifyTopics(topics) };
+  return {
+    fullName: item.fullName,
+    url: typeof item.url === "string" ? item.url : `https://github.com/${item.fullName}`,
+    description: typeof item.description === "string" ? item.description : "",
+    language: typeof item.language === "string" ? item.language : null,
+    starsTotal: item.starsTotal,
+    starsPeriod: item.starsPeriod,
+    periodText: typeof item.periodText === "string" ? item.periodText : "",
+    starsHour: null, spark: [], category: "other", secondary: null, purpose: null, topics: null, createdAt: null, badges: [],
+  };
 }
 
 function storeFor(dir: string): FileReaderStore {
@@ -249,21 +249,31 @@ function retriable(status: number): boolean {
   return status === 429 || status >= 500 || status === 0;
 }
 
+/**
+ * GitHub's trending pages answer 504 about half the time (measured 2026-11-09, each in under a second), so
+ * a 5xx, a dropped connection or a short 429 is tried up to four times. The last answer is returned, with
+ * the first Retry-After kept if the last has none.
+ */
+const RETRY_DELAYS_MS = [2_000, 4_000, 8_000];
+
 async function pull(io: TrendIO, url: string): Promise<TrendFetchResult> {
-  let first: TrendFetchResult | null = null;
-  try {
-    first = await io.fetch(url);
-    if (!retriable(first.status)) return first;
-  } catch {
-    first = null;
+  const sleep = io.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  let last: TrendFetchResult | null = null;
+  let retryAfter: string | null = null;
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+    if (attempt > 0) await sleep(RETRY_DELAYS_MS[attempt - 1]!);
+    try {
+      last = await io.fetch(url);
+    } catch {
+      last = null;
+    }
+    if (last && !retriable(last.status)) return last;
+    retryAfter ??= last?.retryAfter ?? null;
+    // Asked to wait longer than our backoff: stop here and let the plan honour it.
+    if ((retryAfterMs(last?.retryAfter ?? null, io.now()) ?? 0) > RETRY_DELAYS_MS.at(-1)!) break;
   }
-  await new Promise((resolve) => setTimeout(resolve, 2_000));
-  try {
-    const second = await io.fetch(url);
-    return second.retryAfter || !first?.retryAfter ? second : { ...second, retryAfter: first.retryAfter };
-  } catch {
-    return first ?? { status: 0, body: "", retryAfter: null };
-  }
+  const result = last ?? { status: 0, body: "", retryAfter: null };
+  return result.retryAfter || !retryAfter ? result : { ...result, retryAfter };
 }
 
 export function retryAfterMs(header: string | null, now: number): number | null {
@@ -279,126 +289,31 @@ function planAfter(now: number, interval: number, retryAfter: string | null): st
   return new Date(now + extra).toISOString();
 }
 
-function emptyTopics(): TopicState {
-  return { version: 1, hourStart: 0, used: 0, pauseUntil: null, repos: {} };
-}
-
-async function loadTopics(dir: string): Promise<TopicState> {
-  const saved = await storeFor(dir).read("github-trend-topics");
-  if (!saved || typeof saved !== "object") return emptyTopics();
-  const record = saved as Partial<TopicState>;
-  const repos: Record<string, TopicRepo> = {};
-  for (const [name, value] of Object.entries(record.repos ?? {})) {
-    if (!value || typeof value !== "object") continue;
-    const row = value as TopicRepo;
-    repos[name.toLowerCase()] = {
-      topics: Array.isArray(row.topics) ? row.topics.filter((topic) => typeof topic === "string") : null,
-      fetchedAt: typeof row.fetchedAt === "string" ? row.fetchedAt : null,
-    };
-  }
+function blankResult(since: TrendSince, status: "disabled" | "unavailable", message: string, window?: StoredWindow): TrendWindowResult {
   return {
-    version: 1,
-    hourStart: typeof record.hourStart === "number" ? record.hourStart : 0,
-    used: typeof record.used === "number" ? record.used : 0,
-    pauseUntil: typeof record.pauseUntil === "number" ? record.pauseUntil : null,
-    repos,
+    status, since, sourceUrl: SOURCE[since], fetchedAt: null, attemptedAt: window?.attemptedAt ?? null, nextRefreshAt: window?.nextRefreshAt ?? null,
+    trigger: window?.trigger ?? null, message, items: [], demo: false, featured: [], starsAt: null, live: false,
   };
 }
 
-async function saveTopics(dir: string, state: TopicState): Promise<void> {
-  await storeFor(dir).write("github-trend-topics", state);
-}
-
-function topicDue(state: TopicState, name: string, now: number): boolean {
-  const row = state.repos[name];
-  if (!row?.fetchedAt) return true;
-  return now - Date.parse(row.fetchedAt) >= TOPIC_TTL_MS;
-}
-
-function decorate(items: TrendItem[], state: TopicState): TrendItem[] {
-  return items.map((item) => {
-    const row = state.repos[item.fullName.toLowerCase()];
-    const topics = row?.topics ?? null;
-    return { ...item, topics, category: classifyTopics(topics) };
-  });
-}
-
-/** Expired rows are ahead of never-fetched ones, so a full hour of new repos cannot freeze old topics. */
-export function topicQueue(names: readonly string[], state: TopicState, now: number): string[] {
-  return [...new Set(names.map((name) => name.toLowerCase()))].filter((name) => topicDue(state, name, now)).sort((a, b) => {
-    const af = state.repos[a]?.fetchedAt;
-    const bf = state.repos[b]?.fetchedAt;
-    if (af && bf) return Date.parse(af) - Date.parse(bf) || a.localeCompare(b);
-    if (af) return -1;
-    if (bf) return 1;
-    return a.localeCompare(b);
-  });
-}
-
-async function enrichTopics(dir: string, names: readonly string[], io: TrendIO): Promise<void> {
-  if (!io.topicFetch || names.length === 0) return;
-  const state = await loadTopics(dir);
-  const now = io.now();
-  const hour = Math.floor(now / 3_600_000);
-  if (state.hourStart !== hour) {
-    state.hourStart = hour;
-    state.used = 0;
-  }
-  if (state.pauseUntil !== null && now >= state.pauseUntil) state.pauseUntil = null;
-  if (state.pauseUntil !== null && now < state.pauseUntil) {
-    await saveTopics(dir, state);
-    return;
-  }
-  let changed = state.hourStart === hour;
-  for (const name of topicQueue(names, state, now)) {
-    if (state.used >= TOPIC_HOUR_BUDGET) break;
-    if (state.pauseUntil !== null && io.now() < state.pauseUntil) break;
-    let result: TopicFetchResult;
-    try {
-      result = await io.topicFetch(name);
-    } catch {
-      result = { status: 0, topics: null, retryAfter: null, remaining: null, resetAt: null };
-    }
-    state.used += 1;
-    changed = true;
-    const limited = result.status === 403 || result.status === 429 || (result.remaining !== null && result.remaining < 10);
-    if (limited && result.topics === null) {
-      const reset = result.resetAt ?? (retryAfterMs(result.retryAfter, io.now()) !== null ? io.now() + (retryAfterMs(result.retryAfter, io.now()) ?? 0) : null);
-      state.pauseUntil = reset ?? hour * 3_600_000 + 3_600_000;
-      break;
-    }
-    if (result.status === 200 && result.topics) {
-      state.repos[name] = { topics: result.topics.map((topic) => topic.toLowerCase()), fetchedAt: new Date(io.now()).toISOString() };
-      if (result.remaining !== null && result.remaining < 10) state.pauseUntil = result.resetAt ?? hour * 3_600_000 + 3_600_000;
-      continue;
-    }
-    const previous = state.repos[name];
-    state.repos[name] = { topics: previous?.topics ?? null, fetchedAt: new Date(io.now()).toISOString() };
-  }
-  if (changed) await saveTopics(dir, state);
-}
-
 export async function readGithubTrend(io: Omit<TrendIO, "mode"> & { since: TrendSince }): Promise<TrendWindowResult> {
-  const sourceUrl = SOURCE[io.since];
-  if (!io.enabled) {
-    return { status: "disabled", since: io.since, sourceUrl, fetchedAt: null, attemptedAt: null, nextRefreshAt: null, trigger: null, message: "GitHub 趋势未启用", items: [], demo: false };
-  }
-  const window = (await load(io.dir)).windows[io.since];
-  const items = decorate(sortByPeriod(applyExclusions(window.items)), await loadTopics(io.dir));
-  if (!window.fetchedAt) {
-    return { status: "unavailable", since: io.since, sourceUrl, fetchedAt: null, attemptedAt: window.attemptedAt, nextRefreshAt: window.nextRefreshAt, trigger: window.trigger, message: window.lastError ?? "尚未采集", items: [], demo: false };
-  }
-  const overdue = io.now() - Date.parse(window.fetchedAt) > WINDOW_MS[io.since];
-  const stale = Boolean(window.lastError) || overdue;
+  if (!io.enabled) return blankResult(io.since, "disabled", "GitHub 趋势未启用");
+  const envelope = await load(io.dir);
+  const window = envelope.windows[io.since];
+  if (!window.fetchedAt) return blankResult(io.since, "unavailable", window.lastError ? `还没有成功采集过：${window.lastError}` : "还没有采集过", window);
+  const now = io.now();
+  const repos = await loadRepos(io.dir);
+  const lists = SINCE.map((since) => new Set(applyExclusions(envelope.windows[since].items).map((item) => item.fullName.toLowerCase())));
+  const triple = new Set([...lists[0]!].filter((name) => lists[1]!.has(name) && lists[2]!.has(name)));
+  const { items, featured } = decorateList(repos, { since: io.since, items: sortByPeriod(applyExclusions(window.items)), triple }, now);
+  const overdue = now - Date.parse(window.fetchedAt) > WINDOW_MS[io.since] + STALE_GRACE_MS;
   const message = window.lastError
-    ? "最近一次采集失败，仍显示上次成功快照。计划不早于下次采集时间，到点不保证更新。"
-    : overdue
-      ? "快照已超过该窗口的计划间隔。计划不早于下次采集时间，到点不保证更新。"
-      : items.length === 0 ? "这次候选都在排除名单里。" : null;
+    ? `最近一次采集没成功（${window.lastError}），先显示上次的结果。`
+    : overdue ? "榜单比计划的更新时间旧，后台采集可能停了。" : items.length === 0 ? "这一期的仓库都在排除名单里。" : null;
   return {
-    status: stale ? "stale" : "ready",
+    status: window.lastError || overdue ? "stale" : "ready",
     since: io.since,
-    sourceUrl,
+    sourceUrl: SOURCE[io.since],
     fetchedAt: window.fetchedAt,
     attemptedAt: window.attemptedAt,
     nextRefreshAt: window.nextRefreshAt,
@@ -406,10 +321,25 @@ export async function readGithubTrend(io: Omit<TrendIO, "mode"> & { since: Trend
     message,
     items,
     demo: window.demo,
+    featured,
+    starsAt: repos.starsAt,
+    live: Boolean(repos.starsAt && now - Date.parse(repos.starsAt) < LIVE_MS),
   };
 }
 
-export async function refreshGithubTrend(io: TrendIO): Promise<{ ok: boolean; reason?: "cooldown" | "locked" | "disabled"; windows: Record<TrendSince, { ok: boolean }> }> {
+export interface RefreshResult {
+  ok: boolean;
+  reason?: "cooldown" | "locked" | "disabled";
+  windows: Record<TrendSince, { ok: boolean }>;
+  stars?: { polled: number; ok: number };
+  purposes?: { written: number; failed: number };
+}
+
+/**
+ * One worker tick (or the admin's forced run): the trending pages that are due, then the live stars of every
+ * listed repo, then a few purpose lines, 精选 first. Readers never trigger any of it.
+ */
+export async function refreshGithubTrend(io: TrendIO): Promise<RefreshResult> {
   const idle = { daily: { ok: false }, weekly: { ok: false }, monthly: { ok: false } };
   if (!io.enabled) return { ok: false, reason: "disabled", windows: idle };
   const now = io.now();
@@ -422,50 +352,56 @@ export async function refreshGithubTrend(io: TrendIO): Promise<{ ok: boolean; re
     if (io.mode === "force" && envelope.forcedAt && io.now() - Date.parse(envelope.forcedAt) < FORCE_COOLDOWN_MS) return "cooldown" as const;
     const windows = { daily: { ok: true }, weekly: { ok: true }, monthly: { ok: true } };
     let any = false;
-    const seen = new Set<string>();
+    const fresh = new Set<TrendSince>();
     for (const since of SINCE) {
       const current = envelope.windows[since];
-      if (io.mode === "due" && current.nextRefreshAt && Date.parse(current.nextRefreshAt) > now) continue;
+      if (io.mode === "due" && current.nextRefreshAt && Date.parse(current.nextRefreshAt) - DUE_SLACK_MS > now) continue;
       any = true;
       const response = await pull(io, SOURCE[since]);
       const at = new Date(io.now()).toISOString();
       current.attemptedAt = at;
       current.trigger = io.mode === "force" ? "admin" : "schedule";
       if (response.status !== 200) {
-        current.lastError = `来源返回 HTTP ${response.status}`;
-        current.nextRefreshAt = planAfter(io.now(), WINDOW_MS[since], response.retryAfter);
+        current.lastError = `GitHub 返回 HTTP ${response.status}`;
+        current.nextRefreshAt = planAfter(io.now(), Math.min(WINDOW_MS[since], FAILED_RETRY_MS), response.retryAfter);
         windows[since] = { ok: false };
         continue;
       }
       const parsed = parseTrendingHtml(response.body, since);
       if (parsed.withPeriod.length === 0) {
-        current.lastError = parsed.rawCards > 0 ? "趋势页有卡片，但没有可用的期间星数" : "来源未返回趋势卡片";
-        current.nextRefreshAt = planAfter(io.now(), WINDOW_MS[since], response.retryAfter);
+        current.lastError = parsed.rawCards > 0 ? "页面有仓库卡片，但读不到期间星数" : "页面上没有仓库卡片";
+        current.nextRefreshAt = planAfter(io.now(), Math.min(WINDOW_MS[since], FAILED_RETRY_MS), response.retryAfter);
         windows[since] = { ok: false };
         continue;
       }
       current.items = sortByPeriod(applyExclusions(parsed.withPeriod));
-      for (const item of current.items) seen.add(item.fullName.toLowerCase());
       current.fetchedAt = at;
       current.lastError = null;
       current.demo = false;
       current.nextRefreshAt = planAfter(io.now(), WINDOW_MS[since], null);
       windows[since] = { ok: true };
+      fresh.add(since);
     }
-    for (const since of SINCE) for (const item of envelope.windows[since].items) seen.add(item.fullName.toLowerCase());
     if (any || io.mode === "force") {
       if (io.mode === "force") envelope.forcedAt = new Date(io.now()).toISOString();
       await save(io.dir, envelope);
     }
-    await enrichTopics(dirOf(io), [...seen], io);
-    return windows;
+
+    const repos = await loadRepos(io.dir);
+    const listed = Object.fromEntries(SINCE.map((since) => [since, envelope.windows[since].items.map((item) => item.fullName)])) as Record<TrendSince, string[]>;
+    const names = SINCE.flatMap((since) => listed[since]);
+    noteListed(repos, names, fresh.has("daily") ? listed.daily : null, io.now());
+    const stars = await pollRepos(repos, names, { now: io.now, repoFetch: io.repoFetch, hasToken: io.hasToken === true });
+    // 精选 of each list first, then the rest by period stars, so the cards on top get their line first.
+    const ordered = new Map<string, TrendItem>();
+    const decorated = SINCE.map((since) => decorateList(repos, { since, items: envelope.windows[since].items, triple: new Set() }, io.now()));
+    for (const { items, featured } of decorated) for (const item of items) if (featured.includes(item.fullName)) ordered.set(item.fullName.toLowerCase(), item);
+    for (const { items } of decorated) for (const item of items) if (!ordered.has(item.fullName.toLowerCase())) ordered.set(item.fullName.toLowerCase(), item);
+    const purposes = await describeRepos(repos, [...ordered.values()], { now: io.now, describe: io.describe, waitForMeta: Boolean(io.repoFetch && io.hasToken) });
+    await saveRepos(io.dir, repos);
+    return { windows, stars, purposes };
   });
   if (ran === "locked") return { ok: false, reason: "locked", windows: idle };
   if (ran === "cooldown") return { ok: false, reason: "cooldown", windows: idle };
-  return { ok: true, windows: ran };
+  return { ok: true, ...ran };
 }
-
-function dirOf(io: TrendIO): string {
-  return io.dir;
-}
-
