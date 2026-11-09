@@ -22,9 +22,18 @@ AA key 只保存在被 Git 忽略的本机 .env 中，变量为 AA_API_KEY。示
 
 ## Tibo 暂停与 GitHub 趋势
 
-`MAFI_CODEX_RESET_ENABLED` 只有小写 `true` 才恢复 Tibo 上游请求。缺省是暂停：路由和代码还在，不打上游，也不改写缓存。AA 不受这个开关影响。恢复或再次暂停都要重启 API 和 Web。
+`MAFI_CODEX_RESET_ENABLED` 只有小写 `true` 才恢复 Tibo 上游请求。缺省是暂停：路由和代码还在，不打上游，也不改写缓存，入口隐藏。AA 不受这个开关影响。恢复或再次暂停都要重启 API 和 Web。
 
-`/github-trending` 读 GitHub 趋势页的期间新增星数，不是全站榜，也不是模型榜。导航放在「AA 模型榜」下面，只是沿用「模型」这一段的位置。`GET` 只读 `{dataDir}/mafi-readers/github-trending.json`。`MAFI_GITHUB_TREND_ENABLED=true` 时 worker 才按今日 30 分钟、本周 2 小时、本月 6 小时抓取。管理员强制采集有 60 秒冷却，并且要和 worker 共用同一个 `AIHOT_DATA_DIR`。类别用 GitHub topics 对静态规则：只命中一类才标 Agent/AI、开发工具或基础设施；多类或规则对不上标未分类；还没取到标待确认。topics 缓存 7 天，过期的优先补查，每小时最多 10 次，并看响应头剩余额度。失败不挡住趋势列表。不做模型分类。排除 `vercel-labs/agent-desktop` 与 `thedotmack/claude-mem`。Cloudflare 迁移边界见 [部署文档](deploy.md) 2026-11-07 一节。
+`/github-trending` 在「AA 模型榜」下面，只是沿用「模型」这一段的位置，不是模型榜。数据和规则：
+
+- **排序**：GitHub Trending 页上写的期间新增星数（今日 / 本周 / 本月），不是全站星增量榜。今日 30 分钟、本周 2 小时、本月 6 小时抓一次。
+- **累计星数**：worker 每 5 分钟从 `api.github.com/repos/{owner}/{repo}` 读上榜仓库的实时数（有 `GITHUB_TOKEN` 时全部，没有时每小时约 40 次），保留 26 小时，用来算「近 1 小时 +N」和 24 小时迷你曲线。
+- **较上次 +N**：浏览器记住每个仓库上次看到的累计星数（localStorage `mafi-gh-seen-v1`），刷新后有新增的会从旧值滚到新值，并飘出「+N ★」。只用真实差值；系统开了减少动态效果时只显示文字。
+- **中文用途和类别**：模型步骤 `githubPurpose` 在 worker 里写，一句中文用途加主类 / 次类（AI Agent、LLM 应用/模型、开发工具、基础设施/运维、数据/数据库、前端/设计、安全、教程/清单、其他）。模型还没写到或模型调用关着时，用 topics、仓库名和描述的规则分类，并显示英文描述。
+- **精选**：每个榜按期间星数取前三，跳过「常驻」。徽章：新星（创建不到 30 天）、爆发（这一期新增占累计三分之一以上）、常驻（连续 3 天以上在日榜）、三榜（同时在今日、本周、本月榜）。
+- **排除名单**：`trend-config.ts`，现在为空。
+
+`GET` 只读 `{dataDir}/mafi-readers/` 下的 `github-trending.json` 和 `github-repos.json`；采集只在 `MAFI_GITHUB_TREND_ENABLED=true` 的 worker 里跑。管理员强制采集（`POST /api/admin/mafi-readers/github-trending/refresh`，要登录和 CSRF）有 60 秒冷却。Cloudflare 迁移边界见 [部署文档](deploy.md) 2026-11-09 一节。
 
 ## 更新与本机边界
 
