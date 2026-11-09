@@ -40,9 +40,7 @@ const C = { bg: "#0a0a0c", panel: "#121216", line: "#3a3a40", text: "#e8e8ec", s
 const MOTION_CSS = `
 @keyframes mafi-gh-rise { 0% { transform: translateY(4px); opacity: 0 } 15% { opacity: 1 } 70% { opacity: 1 } 100% { transform: translateY(-26px); opacity: 0 } }
 @keyframes mafi-gh-spark { 0% { transform: translate(0, 0) scale(.5); opacity: 0 } 20% { opacity: 1 } 100% { transform: translate(var(--dx), var(--dy)) scale(1); opacity: 0 } }
-@keyframes mafi-gh-glint { 0%, 100% { color: ${C.pale} } 35% { color: #fff4c8 } }
 @keyframes mafi-gh-pulse { 0%, 100% { opacity: .35 } 50% { opacity: 1 } }
-@media (prefers-reduced-motion: reduce) { .mafi-gh-anim { animation: none !important } }
 `;
 
 /** Stars this browser saw last time, per repo: the "+N ★" is the real difference, not an animation for show. */
@@ -116,11 +114,11 @@ const SPARKS = [[-18, -14], [16, -18], [-8, -24], [22, -6], [-22, -2]];
 function StarBurst({ gain, place }: { gain: Gain; place: "left" | "up" }) {
   return (
     <span key={gain.stamp} aria-hidden="true" className={`pointer-events-none absolute select-none ${place === "up" ? "bottom-full right-0 mb-1" : "right-full top-0 mr-2"}`}>
-      <span className="mafi-gh-anim absolute right-0 top-0 whitespace-nowrap text-[12px] font-semibold" style={{ color: C.pale, animation: "mafi-gh-rise 1.8s ease-out forwards" }}>+{fmt(gain.gain)} ★</span>
+      <span className="absolute right-0 top-0 whitespace-nowrap text-[12px] font-semibold" style={{ color: C.pale, animation: "mafi-gh-rise 1.8s ease-out forwards" }}>+{fmt(gain.gain)} ★</span>
       {SPARKS.slice(0, Math.min(SPARKS.length, 2 + Math.floor(Math.log10(gain.gain + 1)) * 2)).map(([dx, dy], i) => (
         <span
           key={i}
-          className="mafi-gh-anim absolute right-2 top-1 text-[9px]"
+          className="absolute right-2 top-1 text-[9px]"
           style={{ color: C.gold, opacity: 0, "--dx": `${dx}px`, "--dy": `${dy}px`, animation: `mafi-gh-spark 1.2s ${0.1 + i * 0.08}s ease-out forwards` } as CSSProperties}
         >✦</span>
       ))}
@@ -174,7 +172,7 @@ function Total({ item, gain, burst = "left" }: { item: TrendItem; gain?: Gain; b
   return (
     <span className="relative inline-flex items-baseline gap-1">
       <span style={{ color: C.muted }}>累计</span>
-      <RollingNumber from={gain?.from ?? null} to={item.starsTotal} className={gain ? "mafi-gh-anim" : ""} />
+      <RollingNumber from={gain?.from ?? null} to={item.starsTotal} />
       {gain && <span className="text-[11px]" style={{ color: C.pale }}>（较上次 +{fmt(gain.gain)}）</span>}
       {gain && !reducedMotion() && <StarBurst gain={gain} place={burst} />}
     </span>
@@ -270,6 +268,9 @@ export default function GithubTrendPage() {
   const items = useMemo(() => result?.items ?? [], [result]);
   const gains = useStarGains(items);
   const starsAgo = useAgo(result?.starsAt ?? null);
+  // The live dot pulses only after hydration, and never under reduced motion.
+  const [moving, setMoving] = useState(false);
+  useEffect(() => setMoving(!reducedMotion()), []);
   const busy = revalidator.state !== "idle";
   const rank = useMemo(() => new Map(items.map((item, i) => [item.fullName, i + 1])), [items]);
   const counts = useMemo(() => {
@@ -319,7 +320,7 @@ export default function GithubTrendPage() {
         </nav>
         <div className="flex items-center gap-3 text-[12.5px]" style={{ color: C.muted }}>
           {result?.live
-            ? <span className="inline-flex items-center gap-1.5"><span aria-hidden="true" className="mafi-gh-anim inline-block size-1.5 rounded-full" style={{ backgroundColor: C.pale, animation: "mafi-gh-pulse 2.4s ease-in-out infinite" }} />星数实时{starsAgo ? ` · ${starsAgo}` : ""}</span>
+            ? <span className="inline-flex items-center gap-1.5"><span aria-hidden="true" className="inline-block size-1.5 rounded-full" style={{ backgroundColor: C.pale, animation: moving ? "mafi-gh-pulse 2.4s ease-in-out infinite" : undefined }} />星数实时{starsAgo ? ` · ${starsAgo}` : ""}</span>
             : result && result.status !== "disabled" && <span>{result.starsAt ? `星数停在 ${stamp(result.starsAt)}` : "累计星数取自榜单页"}</span>}
           <button
             type="button"
