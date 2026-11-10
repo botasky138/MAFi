@@ -6,6 +6,7 @@ import { pageMeta } from "@aihot/web/lib/seo";
 import type { AaData, AaModel } from "../contracts.ts";
 import { PRIVATE_HEADERS, ReaderFooter, ReaderNav, ReaderState, SourceLink, useReaderRefresh } from "./common.tsx";
 import { readPage } from "./reader.server.ts";
+import { AaPull } from "./aa-pull.tsx";
 import {
   AA_LEADERBOARD_STORAGE_KEY,
   buildAaModelTree,
@@ -121,6 +122,8 @@ export default function AaModels() {
   const [sort, setSort] = useState<AaSortKey>("intelligence");
   const [topN, setTopN] = useState<(typeof TOP_N_OPTIONS)[number]["value"]>(15);
   const [prefsReady, setPrefsReady] = useState(false);
+  // Models the last "从 AA 拉取最新" found that the list before it lacked; marked 新 until the page is left.
+  const [newIds, setNewIds] = useState<ReadonlySet<string>>(new Set());
   const skipNextPersist = useRef(true);
   useReaderRefresh();
 
@@ -176,6 +179,7 @@ export default function AaModels() {
       <SourceLink href="https://artificialanalysis.ai/zh" className="text-[13px] font-medium text-accent">打开 AA 官方榜单</SourceLink>
     </div>
     <ReaderState result={result} />
+    {result.refresh && <AaPull refresh={result.refresh} fetchedAt={result.fetchedAt} onAdded={(ids) => setNewIds(new Set(ids))} />}
     {result.data ? <>
       <div className="mb-4 flex flex-col gap-3 rounded-card border border-line bg-surface px-4 py-3 text-[12px] text-ink-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -245,7 +249,7 @@ export default function AaModels() {
             const kindLabel = kind === "reasoning" ? "推理" : kind === "non_reasoning" ? "非推理" : "—";
             return <tr key={model.id} className="border-b border-line-soft last:border-0">
               <td className="num px-4 py-4 text-right text-ink-4">{index + 1}</td>
-              <th scope="row" className="px-4 py-4 font-medium text-ink"><span>{model.name}</span><span className="mt-1 block text-[12px] font-normal text-ink-4">{model.model_creator.name}</span></th>
+              <th scope="row" className="px-4 py-4 font-medium text-ink"><span>{model.name}</span>{newIds.has(model.id) && <span className="ml-2 rounded-full border border-accent px-1.5 py-px align-middle text-[11px] font-medium text-accent">新</span>}<span className="mt-1 block text-[12px] font-normal text-ink-4">{model.model_creator.name}</span></th>
               <td className="px-4 py-4 text-ink-3">{kindLabel}</td>
               <td className="num px-4 py-4 text-right font-semibold text-ink">{number(cells.intelligence)}</td>
               <td className="num px-4 py-4 text-right text-ink-3">{number(cells.speed)}</td>
@@ -257,7 +261,7 @@ export default function AaModels() {
         </table>
         {!ranked.length && <EmptyState title="没有匹配的模型">试试在模型树里勾选更多项，或将类型设为全部。</EmptyState>}
       </div>
-      <p className="mt-4 text-[12px] leading-[1.8] text-ink-4">指标来自 Artificial Analysis；图表与默认排序使用官方 Intelligence Index，完整名次以官网为准。“—”表示未提供、未测量或名称未标注推理类型。本页复用本机 AA 快照，不额外消耗付费配额。开放权重 / 模态等字段不在免费 API 快照中。</p>
+      <p className="mt-4 text-[12px] leading-[1.8] text-ink-4">指标来自 Artificial Analysis；图表与默认排序使用官方 Intelligence Index，完整名次以官网为准。“—”表示未提供、未测量或名称未标注推理类型。打开本页和自动检查只读本机快照；只有每 24 小时的自动更新和「从 AA 拉取最新」才向 AA 发请求，每次用掉的免费额度等于列表页数。开放权重 / 模态等字段不在免费 API 快照中。</p>
     </> : <div className="card">
       <EmptyState title={result.status === "needs_key" ? "尚未连接 AA 数据源" : "暂时没有可展示的 AA 数据"} action={<SourceLink href="https://artificialanalysis.ai/data-api" className="text-[13px] font-medium text-accent">申请 AA 免费 API key</SourceLink>}>
         连接后显示 AA 官方智能指数、速度与价格。现在可以直接打开官网查看完整榜单。

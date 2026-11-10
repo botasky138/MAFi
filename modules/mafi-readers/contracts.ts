@@ -7,6 +7,35 @@ export interface ReadResult<T> {
   nextRefreshAt: string | null;
   message: string | null;
   data: T | null;
+  /** AA only: what is left of its request window and when the page's button may pull again. */
+  refresh?: RefreshInfo;
+}
+
+export interface RefreshInfo {
+  /** Requests left in AA's current window (AA's own count when it sent one), out of `limit`. */
+  remaining: number;
+  limit: number;
+  /** When the window resets; null when no request has started one. */
+  resetAt: string | null;
+  /** Requests a complete pull takes (one per page). */
+  cost: number;
+  /** A manual pull ran less than 5 minutes ago: the button waits until this time. */
+  manualAfter: string | null;
+}
+
+/** The answer to the AA page's "pull now". The list itself is read again through the page's loader. */
+export interface AaRefreshResult {
+  status: ReadStatus;
+  fetchedAt: string | null;
+  message: string | null;
+  total: number | null;
+  refresh: RefreshInfo | null;
+  /** Why nothing was pulled: a pull in the last 5 minutes, or too few requests left for a complete one. */
+  refused: null | { reason: "cooldown" | "quota"; until: string | null };
+  /** Models not on the list this pull replaced (at most 20 named). */
+  added: Array<{ id: string; name: string }>;
+  addedCount: number;
+  removedCount: number;
 }
 
 export interface CodexContextPost {
