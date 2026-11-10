@@ -41,6 +41,11 @@ const MOTION_CSS = `
 @keyframes mafi-gh-rise { 0% { transform: translateY(4px); opacity: 0 } 15% { opacity: 1 } 70% { opacity: 1 } 100% { transform: translateY(-26px); opacity: 0 } }
 @keyframes mafi-gh-spark { 0% { transform: translate(0, 0) scale(.5); opacity: 0 } 20% { opacity: 1 } 100% { transform: translate(var(--dx), var(--dy)) scale(1); opacity: 0 } }
 @keyframes mafi-gh-pulse { 0%, 100% { opacity: .35 } 50% { opacity: 1 } }
+@keyframes mafi-gh-move { from { transform: translateY(var(--from-y)) } to { transform: none } }
+@keyframes mafi-gh-enter { from { opacity: 0; transform: translateX(18px) } to { opacity: 1; transform: none } }
+@keyframes mafi-gh-edge { 0%, 35% { box-shadow: inset 3px 0 0 var(--edge), 0 0 0 1px var(--ring) } 100% { box-shadow: inset 3px 0 0 transparent, 0 0 0 1px transparent } }
+@keyframes mafi-gh-sheen { from { transform: translateX(-120%) } to { transform: translateX(340%) } }
+@keyframes mafi-gh-pop { 0% { transform: scale(.4); opacity: 0 } 60% { transform: scale(1.15); opacity: 1 } 100% { transform: scale(1); opacity: 1 } }
 `;
 
 /** Stars this browser saw last time, per repo: the "+N ★" is the real difference, not an animation for show. */
@@ -179,14 +184,61 @@ function Total({ item, gain, burst = "left" }: { item: TrendItem; gain?: Gain; b
   );
 }
 
-function FeaturedCard({ item, rank, since, gain }: { item: TrendItem; rank: number; since: TrendSince; gain?: Gain }) {
+/** 新上榜 / ▲N / ▼N against the ranking this one replaced; nothing for a repo that kept its place. */
+function RankMove({ item, rank, play }: { item: TrendItem; rank: number; play: boolean }) {
+  const change = item.rankChange;
+  if (!change || change === "same") return null;
+  const steps = item.rankPrev === null ? 0 : Math.abs(item.rankPrev - rank);
+  const look = change === "new"
+    ? { backgroundColor: C.gold, borderColor: C.gold, color: C.bg }
+    : change === "up" ? { borderColor: "rgba(201,162,39,.6)", color: C.pale } : { borderColor: C.line, color: C.muted };
+  return (
+    <span
+      title={change === "new" ? "上一次的榜单里没有它" : `上一次排第 ${item.rankPrev} 名`}
+      className="inline-flex items-center rounded-full border px-1.5 py-px text-[11px] font-semibold leading-[1.4] tabular-nums"
+      style={{ ...look, animation: play ? "mafi-gh-pop .5s .15s ease-out backwards" : undefined }}
+    >
+      {change === "new" ? "新上榜" : `${change === "up" ? "▲" : "▼"}${steps}`}
+    </span>
+  );
+}
+
+/**
+ * The move itself, played when the page loads, after the 刷新 button, or when a new ranking arrives: a riser
+ * slides up from below with a gold edge, a faller settles from above with a grey one, a newcomer slides in
+ * with a sweep of light. Gold and grey, not red and green, which read the other way round on Chinese quotes.
+ */
+function moveStyle(item: TrendItem, rank: number, play: boolean, order: number): CSSProperties {
+  if (!play || !item.rankChange || item.rankChange === "same") return {};
+  const delay = `${Math.min(order * 35, 400)}ms`;
+  if (item.rankChange === "new") {
+    return { "--edge": "rgba(232,212,139,.95)", "--ring": "rgba(201,162,39,.45)", animation: `mafi-gh-enter .6s cubic-bezier(.2,.7,.2,1) ${delay} backwards, mafi-gh-edge 1.8s ease-out ${delay}` } as CSSProperties;
+  }
+  const up = item.rankChange === "up";
+  const steps = Math.min(4, Math.abs((item.rankPrev ?? rank) - rank));
+  return {
+    "--from-y": `${(up ? 1 : -1) * steps * 14}px`,
+    "--edge": up ? "rgba(232,212,139,.95)" : "rgba(154,154,164,.9)",
+    "--ring": up ? "rgba(201,162,39,.4)" : "rgba(154,154,164,.3)",
+    animation: `mafi-gh-move .7s cubic-bezier(.2,.7,.2,1) ${delay} backwards, mafi-gh-edge 1.8s ease-out ${delay}`,
+  } as CSSProperties;
+}
+
+function Sheen({ item, play }: { item: TrendItem; play: boolean }) {
+  if (!play || item.rankChange !== "new") return null;
+  return <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-0 w-1/3" style={{ background: "linear-gradient(90deg, transparent, rgba(232,212,139,.16), transparent)", animation: "mafi-gh-sheen 1.2s .25s ease-out both" }} />;
+}
+
+function FeaturedCard({ item, rank, since, gain, play, order }: { item: TrendItem; rank: number; since: TrendSince; gain?: Gain; play: boolean; order: number }) {
   return (
     <li
-      className="flex min-w-0 flex-col rounded-card border px-4 pb-4 pt-3.5"
-      style={{ borderColor: "rgba(201,162,39,.45)", background: "linear-gradient(180deg,#17171c 0%,#111114 100%)", boxShadow: "inset 0 1px 0 rgba(232,212,139,.12)" }}
+      className="relative flex min-w-0 flex-col overflow-hidden rounded-card border px-4 pb-4 pt-3.5"
+      style={{ borderColor: "rgba(201,162,39,.45)", background: "linear-gradient(180deg,#17171c 0%,#111114 100%)", boxShadow: "inset 0 1px 0 rgba(232,212,139,.12)", ...moveStyle(item, rank, play, order) }}
     >
+      <Sheen item={item} play={play} />
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="mr-1 text-[12px] font-semibold tracking-[0.08em]" style={{ color: C.gold }}>No.{rank}</span>
+        <RankMove item={item} rank={rank} play={play} />
         <Badges badges={item.badges} />
       </div>
       <a href={item.url} target="_blank" rel="noopener noreferrer" className="mt-2 break-words text-[17px] font-semibold leading-snug hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2" style={{ color: C.text, outlineColor: C.gold }}>
@@ -212,14 +264,16 @@ function FeaturedCard({ item, rank, since, gain }: { item: TrendItem; rank: numb
 }
 
 /** Phone: the numbers sit in a line under the repo. Wider screens: a column on the right. */
-function Row({ item, rank, since, gain }: { item: TrendItem; rank: number; since: TrendSince; gain?: Gain }) {
+function Row({ item, rank, since, gain, play, order }: { item: TrendItem; rank: number; since: TrendSince; gain?: Gain; play: boolean; order: number }) {
   return (
-    <li className="rounded-card border px-3.5 py-3 sm:flex sm:gap-4 sm:px-4" style={{ borderColor: C.line, backgroundColor: C.panel, boxShadow: "inset 0 1px 0 rgba(232,212,139,.05)" }}>
+    <li className="relative overflow-hidden rounded-card border px-3.5 py-3 sm:flex sm:gap-4 sm:px-4" style={{ borderColor: C.line, backgroundColor: C.panel, boxShadow: "inset 0 1px 0 rgba(232,212,139,.05)", ...moveStyle(item, rank, play, order) }}>
+      <Sheen item={item} play={play} />
       <div className="flex min-w-0 flex-1 gap-3">
       <span className="w-6 shrink-0 pt-0.5 text-right text-[13px] tabular-nums" style={{ color: C.muted }}>{rank}</span>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <a href={item.url} target="_blank" rel="noopener noreferrer" className="break-all text-[15px] font-semibold hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2" style={{ color: C.text, outlineColor: C.gold }}>{item.fullName}</a>
+          <RankMove item={item} rank={rank} play={play} />
           <Badges badges={item.badges} />
         </div>
         {(item.purpose || item.description) && <p className={`mt-1 text-[13.5px] leading-relaxed ${item.purpose ? "" : "line-clamp-2"}`} style={{ color: item.purpose ? C.soft : C.muted }}>{item.purpose ?? item.description}</p>}
@@ -271,6 +325,26 @@ export default function GithubTrendPage() {
   // The live dot pulses only after hydration, and never under reduced motion.
   const [moving, setMoving] = useState(false);
   useEffect(() => setMoving(!reducedMotion()), []);
+  // Rank moves play when the page loads, after the 刷新 button, and when a new ranking (or another window)
+  // arrives; the minute-by-minute background reload of the same ranking stays still.
+  const [playing, setPlaying] = useState(false);
+  const manualRefresh = useRef(false);
+  const shownRanking = useRef<string | null>(null);
+  useEffect(() => {
+    const ranking = `${since}:${result?.rankedAt ?? ""}`;
+    const replay = shownRanking.current !== ranking || manualRefresh.current;
+    shownRanking.current = ranking;
+    manualRefresh.current = false;
+    if (!replay || reducedMotion()) return;
+    setPlaying(true);
+    const timer = window.setTimeout(() => setPlaying(false), 2_600);
+    return () => window.clearTimeout(timer);
+  }, [result, since]);
+  const moves = useMemo(() => ({
+    up: items.filter((item) => item.rankChange === "up").length,
+    down: items.filter((item) => item.rankChange === "down").length,
+    fresh: items.filter((item) => item.rankChange === "new").length,
+  }), [items]);
   const busy = revalidator.state !== "idle";
   const rank = useMemo(() => new Map(items.map((item, i) => [item.fullName, i + 1])), [items]);
   const counts = useMemo(() => {
@@ -324,7 +398,7 @@ export default function GithubTrendPage() {
             : result && result.status !== "disabled" && <span>{result.starsAt ? `星数停在 ${stamp(result.starsAt)}` : "累计星数取自榜单页"}</span>}
           <button
             type="button"
-            onClick={() => revalidator.revalidate()}
+            onClick={() => { manualRefresh.current = true; void revalidator.revalidate(); }}
             disabled={busy || invalid}
             className="rounded-full border px-3 py-1.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             style={{ borderColor: C.line, backgroundColor: C.panel, color: C.soft, outlineColor: C.gold }}
@@ -378,11 +452,21 @@ export default function GithubTrendPage() {
         </p>
       )}
 
+      {result?.previousAt && (moves.up + moves.down + moves.fresh + result.dropped.length > 0) && (
+        <p className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px]" style={{ color: C.muted }}>
+          <span>与 {stamp(result.previousAt)} 的榜单相比</span>
+          {moves.fresh > 0 && <span style={{ color: C.pale }}>新上榜 {moves.fresh}</span>}
+          {moves.up > 0 && <span style={{ color: C.pale }}>▲ 上升 {moves.up}</span>}
+          {moves.down > 0 && <span>▼ 下降 {moves.down}</span>}
+          {result.dropped.length > 0 && <span title={result.dropped.join("、")}>跌出 {result.dropped.length}：{result.dropped.slice(0, 3).join("、")}{result.dropped.length > 3 ? " 等" : ""}</span>}
+        </p>
+      )}
+
       {featured.length > 0 && (
         <section aria-labelledby="gh-featured" className="mt-6">
           <h2 id="gh-featured" className="mb-3 text-[12px] font-semibold tracking-[0.18em]" style={{ color: C.gold }}>精选</h2>
           <ol className="grid gap-3 lg:grid-cols-3">
-            {featured.map((item) => <FeaturedCard key={item.fullName} item={item} rank={rank.get(item.fullName)!} since={since} gain={gains[item.fullName.toLowerCase()]} />)}
+            {featured.map((item, i) => <FeaturedCard key={item.fullName} item={item} rank={rank.get(item.fullName)!} since={since} gain={gains[item.fullName.toLowerCase()]} play={playing} order={i} />)}
           </ol>
         </section>
       )}
@@ -391,7 +475,7 @@ export default function GithubTrendPage() {
         <section aria-labelledby="gh-list" className="mt-7">
           <h2 id="gh-list" className="mb-3 text-[12px] font-semibold tracking-[0.18em]" style={{ color: C.muted }}>{filtering ? `筛选结果 ${rest.length}` : "榜单"}</h2>
           <ol className="space-y-2.5">
-            {rest.map((item) => <Row key={item.fullName} item={item} rank={rank.get(item.fullName)!} since={since} gain={gains[item.fullName.toLowerCase()]} />)}
+            {rest.map((item, i) => <Row key={item.fullName} item={item} rank={rank.get(item.fullName)!} since={since} gain={gains[item.fullName.toLowerCase()]} play={playing} order={i + featured.length} />)}
           </ol>
         </section>
       )}

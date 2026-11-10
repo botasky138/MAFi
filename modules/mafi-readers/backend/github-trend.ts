@@ -43,6 +43,12 @@ export interface ParseResult {
   withPeriod: TrendItem[];
 }
 
+/** The ranking this one replaced: its order (display names, rank 1 first) and the last time it was fetched. */
+interface PreviousRanking {
+  fetchedAt: string;
+  order: string[];
+}
+
 interface StoredWindow {
   fetchedAt: string | null;
   attemptedAt: string | null;
@@ -52,6 +58,9 @@ interface StoredWindow {
   items: TrendItem[];
   sourceUrl: string;
   demo: boolean;
+  /** When the current order first appeared. A fetch with the same order leaves it, and `previous`, alone. */
+  rankedAt: string | null;
+  previous: PreviousRanking | null;
 }
 
 interface Envelope {
@@ -78,7 +87,7 @@ export interface TrendIO {
 }
 
 function blank(since: TrendSince): StoredWindow {
-  return { fetchedAt: null, attemptedAt: null, nextRefreshAt: null, lastError: null, trigger: null, items: [], sourceUrl: SOURCE[since], demo: false };
+  return { fetchedAt: null, attemptedAt: null, nextRefreshAt: null, lastError: null, trigger: null, items: [], sourceUrl: SOURCE[since], demo: false, rankedAt: null, previous: null };
 }
 
 function emptyEnvelope(): Envelope {
@@ -129,6 +138,8 @@ export function parseTrendingHtml(html: string, since: TrendSince): ParseResult 
       topics: null,
       createdAt: null,
       badges: [],
+      rankPrev: null,
+      rankChange: null,
     });
   }
   return { rawCards: chunks.length, withPeriod };
@@ -157,7 +168,20 @@ function keptItem(value: unknown): TrendItem | null {
     starsPeriod: item.starsPeriod,
     periodText: typeof item.periodText === "string" ? item.periodText : "",
     starsHour: null, spark: [], category: "other", secondary: null, purpose: null, topics: null, createdAt: null, badges: [],
+    rankPrev: null, rankChange: null,
   };
+}
+
+function keptPrevious(value: unknown): PreviousRanking | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Partial<PreviousRanking>;
+  if (typeof record.fetchedAt !== "string" || !Array.isArray(record.order)) return null;
+  const order = record.order.filter((name): name is string => typeof name === "string" && name.includes("/"));
+  return order.length ? { fetchedAt: record.fetchedAt, order } : null;
+}
+
+function sameOrder(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((name, i) => name.toLowerCase() === b[i]!.toLowerCase());
 }
 
 function storeFor(dir: string): FileReaderStore {
@@ -183,6 +207,8 @@ async function load(dir: string): Promise<Envelope> {
       sourceUrl: SOURCE[since],
       demo: window.demo === true,
       items: Array.isArray(window.items) ? window.items.map(keptItem).filter((item): item is TrendItem => item !== null) : [],
+      rankedAt: typeof window.rankedAt === "string" ? window.rankedAt : null,
+      previous: keptPrevious(window.previous),
     };
   }
   return envelope;
@@ -293,6 +319,7 @@ function blankResult(since: TrendSince, status: "disabled" | "unavailable", mess
   return {
     status, since, sourceUrl: SOURCE[since], fetchedAt: null, attemptedAt: window?.attemptedAt ?? null, nextRefreshAt: window?.nextRefreshAt ?? null,
     trigger: window?.trigger ?? null, message, items: [], demo: false, featured: [], starsAt: null, live: false,
+    rankedAt: null, previousAt: null, dropped: [],
   };
 }
 
@@ -305,7 +332,10 @@ export async function readGithubTrend(io: Omit<TrendIO, "mode"> & { since: Trend
   const repos = await loadRepos(io.dir);
   const lists = SINCE.map((since) => new Set(applyExclusions(envelope.windows[since].items).map((item) => item.fullName.toLowerCase())));
   const triple = new Set([...lists[0]!].filter((name) => lists[1]!.has(name) && lists[2]!.has(name)));
-  const { items, featured } = decorateList(repos, { since: io.since, items: sortByPeriod(applyExclusions(window.items)), triple }, now);
+  const previous = window.previous?.order.filter((name) => !EXCLUDED.has(name.toLowerCase())) ?? null;
+  const { items, featured } = decorateList(repos, { since: io.since, items: sortByPeriod(applyExclusions(window.items)), triple, previous }, now);
+  const listed = new Set(items.map((item) => item.fullName.toLowerCase()));
+  const dropped = (previous ?? []).filter((name) => !listed.has(name.toLowerCase()));
   const overdue = now - Date.parse(window.fetchedAt) > WINDOW_MS[io.since] + STALE_GRACE_MS;
   const message = window.lastError
     ? `最近一次采集没成功（${window.lastError}），先显示上次的结果。`
@@ -324,6 +354,9 @@ export async function readGithubTrend(io: Omit<TrendIO, "mode"> & { since: Trend
     featured,
     starsAt: repos.starsAt,
     live: Boolean(repos.starsAt && now - Date.parse(repos.starsAt) < LIVE_MS),
+    rankedAt: window.rankedAt,
+    previousAt: window.previous?.fetchedAt ?? null,
+    dropped,
   };
 }
 
@@ -374,7 +407,15 @@ export async function refreshGithubTrend(io: TrendIO): Promise<RefreshResult> {
         windows[since] = { ok: false };
         continue;
       }
-      current.items = sortByPeriod(applyExclusions(parsed.withPeriod));
+      const next = sortByPeriod(applyExclusions(parsed.withPeriod));
+      // The ranking moves on only when the order changed: refetching the same page keeps the arrows it caused.
+      const before = current.items.map((item) => item.fullName);
+      if (!sameOrder(before, next.map((item) => item.fullName))) {
+        current.previous = current.fetchedAt && before.length ? { fetchedAt: current.fetchedAt, order: before } : null;
+        current.rankedAt = at;
+      }
+      current.rankedAt ??= at;
+      current.items = next;
       current.fetchedAt = at;
       current.lastError = null;
       current.demo = false;
