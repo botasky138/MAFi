@@ -87,6 +87,15 @@ docker compose run --rm setup && docker compose up -d
 
 下面按时间从新到旧列出每次更新要注意的事。
 
+#### GitHub 趋势排名变化与 AA 手动拉取（2026-11-10）
+
+没有数据库迁移，没有新的环境变量或开关，不删除已有缓存。旧的缓存文件照常读：
+
+- `github-trending.json` 每个窗口多两项：`rankedAt`（这份排名第一次出现的时间）和 `previous`（上一份不同排名的顺序和抓取时间）。更新后要等某个榜的顺序真正变一次，那个榜才出现「新上榜 / ▲ / ▼」标记和对比行。
+- `aa-models.json` 多三项：`forcedAt`（上次手动拉取）、`remaining` 和 `resetAt`（AA 响应头报告的剩余次数和重置时间）。
+
+新接口 `POST /api/mafi-readers/aa-models/refresh` 是 AA 页面「从 AA 拉取最新」按钮用的，和 AA 页面一样只在本机站点工作。它只接受本站页面发出的请求（`x-mafi-action: refresh`，`Origin` 与 `SITE_URL` 同源，没有 `Origin` 时 `Sec-Fetch-Site: same-origin`）；前面有反向代理的，原样转发 `Origin`，否则按钮会得到 403。手动拉取每 5 分钟最多一次，AA 剩余次数不够完整拉一次时回 429，不会用光免费额度。
+
 #### GitHub 趋势专页与 Tibo 默认暂停（2026-11-09）
 
 没有数据库迁移，不删除已有缓存。新增的开关都只有小写 `true` 才打开，模板里是 `false`：
