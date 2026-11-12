@@ -242,11 +242,30 @@ export const COMMUNITY_FEEDS: { dev: string[]; hn: string[] } = {
   hn: [],
 };
 
+/**
+ * 热点榜怎么算。一件事的热度看有多少个独立来源在报道、讨论它：每个来源算一票，同一家重复发只算一次，
+ * 一票从报道发出起随时间减弱；满两票的事件才上榜，取热度最高的 10 件。
+ * 框架原本的口味是 48 小时窗口、24 小时减半、不算精选票，适合来源多、媒体多的站。
+ * 这个站 20 个信源里只有两家媒体，其余都是只发自家消息的官方源，按原口味榜单近一半时间是空的；
+ * 这里的数字是拿 2026-10-31 到 11-12 的真实数据回放后定的（docs/mafi-更新日志.md 2026-11-12 一条）。
+ */
+export const HOT = {
+  /** 只看多久以内的报道和讨论（小时）。 */
+  windowHours: 168,
+  /** 一票的分量多久减半（小时）。 */
+  halfLifeHours: 72,
+  /**
+   * 事件里有报道进了精选时，精选另算一票（分量和减弱方式同上，从那篇报道发出起算）。
+   * 打开后，只有一个来源报道、但进了精选的事件也能满两票上榜；关着就必须有至少两个独立来源。
+   */
+  selectedVote: true,
+} as const;
+
 /** 各页分享图（/og/pages/*.png）上的文字。主题目录页的那张按主题数自动生成。 */
 export const CARDS: Record<string, { kicker: string; title: string; subtitle: string; accent?: "hot" | "amber" }> = {
   site: { kicker: subjectAfter("每日", "精选"), title: SITE.tagline, subtitle: SITE.description },
   all: { kicker: subjectAfter("全部", "动态"), title: "医药、AI 与金融领域的最新动态", subtitle: "按时间汇总已覆盖信源中的动态，可按类别与标签筛选。" },
-  hot: { kicker: "热点榜", title: "过去 48 小时，哪些话题热度上升", subtitle: "基于已覆盖公开来源的热度指数、趋势与来源。", accent: "hot" },
+  hot: { kicker: "热点榜", title: `过去 ${hotSpan(HOT.windowHours)}，哪些话题热度上升`, subtitle: "基于已覆盖公开来源的热度指数、趋势与来源。", accent: "hot" },
   daily: { kicker: withSubject("日报"), title: subjectAfter(`每天 ${spokenTime(EDITION_TIMES.daily)}，一份读得完的`, "日报"), subtitle: `${subjectAfter("前一天值得关注的", "动态")}。` },
   weekly: { kicker: withSubject("周报"), title: `一周${REPORTS.entry.noun}，一次看清`, subtitle: "本周的主线、重要发布与值得回看的讨论。" },
   monthly: { kicker: withSubject("月报"), title: "一个月的变化", subtitle: "月度主线与关键事件回顾。" },
@@ -320,6 +339,11 @@ export function withSubject(noun: string): string {
 export function subjectAfter(text: string, noun?: string): string {
   const gap = /^[A-Za-z0-9]/.test(SITE.subject) ? " " : "";
   return `${text}${gap}${noun ? withSubject(noun) : SITE.subject}`;
+}
+
+/** “48 小时”“7 天”“3.5 天”：热点榜里的时长。满 3 天、又是半天的整数倍时按天说，其余按小时说。 */
+export function hotSpan(hours: number): string {
+  return hours >= 72 && hours % 12 === 0 ? `${hours / 24} 天` : `${hours} 小时`;
 }
 
 /** “8 点”“10 点 30 分”：口语里的 HH:mm。 */

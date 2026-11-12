@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useLoaderData, useRevalidator } from "react-router";
 import { IntentLink } from "../components/ui/IntentLink";
 import type { HotEntryView, HotResponse } from "@aihot/contracts/site";
-import { subjectAfter, withSubject } from "@aihot/site";
+import { HOT, hotSpan, subjectAfter, withSubject } from "@aihot/site";
 import { cachedPage, loadOr404 } from "../lib/api.server";
 import { pageReuse } from "../lib/page-reuse";
 import { pageMeta } from "../lib/seo";
@@ -30,7 +30,7 @@ export async function loader({ request }: { request: Request }) {
 export function meta() {
   return pageMeta({
     title: withSubject("热点榜"),
-    description: `${subjectAfter("过去 48 小时", "圈")}讨论最多的 10 个事件：热度、走势，以及都有谁在报道。`,
+    description: `${subjectAfter(`过去 ${hotSpan(HOT.windowHours)}`, "圈")}讨论最多的 10 个事件：热度、走势，以及都有谁在报道。`,
     path: "/hot",
     image: "/og/pages/hot.png",
   });
@@ -40,6 +40,7 @@ const BADGES: Record<HotEntryView["badges"][number], { label: string; tone: "hot
   surge: { label: "爆", tone: "hot", hint: "讨论快速增加" },
   new: { label: "新", tone: "accent", hint: "首报 6 小时内" },
   rising: { label: "发酵中", tone: "amber", hint: "讨论仍在增加" },
+  selected: { label: "精选", tone: "amber", hint: "有报道进了精选，算一票" },
 };
 
 const RANK_COLOR = ["text-rank-1", "text-rank-2", "text-rank-3"];
@@ -256,7 +257,7 @@ export default function HotPage() {
         large
         sub={
           <>
-            过去 {hot.windowHours}{`${subjectAfter(" 小时", "圈")}讨论最多的 `}{hot.entries.length || 10} 件事
+            过去 {hotSpan(hot.windowHours)}{`${subjectAfter("", "圈")}讨论最多的 `}{hot.entries.length || 10} 件事
             {hot.computedAt && (
               <>
                 {" · "}
@@ -281,7 +282,7 @@ export default function HotPage() {
             实时热度
           </div>
           <h1 className="mt-1.5 text-[24px] font-bold leading-[1.3] tracking-[-0.01em] text-ink lg:text-[26px]">{withSubject("热点榜")}</h1>
-          <p className="mt-1.5 text-[13.5px] text-ink-3">过去 {hot.windowHours}{` 小时，${withSubject("圈")}讨论最多的 `}{hot.entries.length || 10} 件事</p>
+          <p className="mt-1.5 text-[13.5px] text-ink-3">过去 {hotSpan(hot.windowHours)}{`，${withSubject("圈")}讨论最多的 `}{hot.entries.length || 10} 件事</p>
         </div>
         {hot.computedAt && (
           <p className="text-[12px] text-ink-4">
@@ -292,7 +293,7 @@ export default function HotPage() {
 
       {!lead ? (
         <div className="card rounded-sheet">
-          <EmptyState title="暂时没有热点">还没有足够多来源共同讨论的事件。</EmptyState>
+          <EmptyState title="暂时没有热点">{HOT.selectedVote ? "还没有被两个以上来源报道、或有报道进了精选的事件。" : "还没有足够多来源共同讨论的事件。"}</EmptyState>
         </div>
       ) : (
         <>
@@ -336,8 +337,9 @@ export default function HotPage() {
           </span>
         </summary>
         <div className="max-w-[760px] space-y-2 pb-2 pl-[21px] pt-2 leading-[1.75] text-ink-3">
-          <p>热度看的是有多少账号和机构在讨论同一件事：同一家重复发只算一次，越近的讨论分量越重，每过 24 小时减半。它反映讨论有多热闹，不代表报道质量。</p>
-          <p>榜单只看过去 48 小时。走势只拿同一批一直在看的来源比较，反映的是我们看得到的范围，不代表全网人数；没有可比的历史时，不画走势线。</p>
+          <p>热度看的是有多少账号和机构在讨论同一件事：每家算一票，同一家重复发只算一次，越近的讨论分量越重，每过 {hotSpan(HOT.halfLifeHours)}减半。它反映讨论有多热闹，不代表报道质量。</p>
+          {HOT.selectedVote && <p>有报道进了精选的事件另算一票，从那篇报道发出时算起，同样随时间减弱。满两票的事件才上榜：两个以上来源报道，或一个来源报道、并且进了精选。</p>}
+          <p>榜单只看过去 {hotSpan(HOT.windowHours)}。走势只拿同一批一直在看的来源比较，反映的是我们看得到的范围，不代表全网人数；没有可比的历史时，不画走势线。</p>
           <p>
             来源名单只列能公开阅读的报道；参与讨论的还有一些不在名单里展示的账号和机构。同一家机构在不同平台发帖合并算一家，所以参与者可能比来源还少。点进事件，可以看各方的报道和观点。
           </p>
