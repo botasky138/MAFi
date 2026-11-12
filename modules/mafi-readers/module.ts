@@ -9,6 +9,7 @@ export default defineModule({
   ],
   apiPaths: [
     /^\/api\/mafi-readers\/(?:codex-resets|aa-models|github-trending)$/,
+    /^\/api\/mafi-readers\/aa-models\/refresh$/,
     /^\/api\/admin\/mafi-readers\/github-trending\/refresh$/,
   ],
 });

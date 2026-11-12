@@ -87,6 +87,27 @@ async function describe(input: PurposeInput): Promise<PurposeOutput> {
   return describeWithModel(input);
 }
 
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/**
+ * A button on this site's own page, not another site's form or script: the browser's Origin (or, without one,
+ * Sec-Fetch-Site) must be the site, and the custom header makes any other origin's fetch stop at a CORS
+ * preflight this server never answers. The local site counts localhost and 127.0.0.1 as the same host.
+ */
+function fromOwnPage(origin: string | undefined, fetchSite: string | undefined, action: string | undefined): boolean {
+  if (action !== "refresh") return false;
+  if (origin) {
+    try {
+      const site = new URL(config.siteUrl), from = new URL(origin);
+      const sameHost = from.hostname === site.hostname || (LOOPBACK.has(from.hostname) && LOOPBACK.has(site.hostname));
+      return from.protocol === site.protocol && from.port === site.port && sameHost;
+    } catch {
+      return false;
+    }
+  }
+  return fetchSite === "same-origin";
+}
+
 async function defaultAuthenticate(cookie: string | undefined): Promise<{ csrf: string } | null> {
   const { sessionPrincipal } = await import("@aihot/backend/admin/auth");
   const admin = await sessionPrincipal(cookie);
@@ -144,6 +165,12 @@ export function createReaderServer(readers?: Readers, trend?: Partial<TrendContr
       });
       app.get("/api/mafi-readers/codex-resets", async () => getReaders().codexResets());
       app.get("/api/mafi-readers/aa-models", async () => getReaders().aaModels());
+      app.post("/api/mafi-readers/aa-models/refresh", async (request, reply) => {
+        const header = (name: string) => { const value = request.headers[name]; return Array.isArray(value) ? value[0] : value; };
+        if (!fromOwnPage(header("origin"), header("sec-fetch-site"), header("x-mafi-action"))) return reply.code(403).send({ message: "只接受本站 AA 页面上的按钮发起拉取" });
+        const result = await getReaders().aaRefresh();
+        return reply.code(result.refused ? 429 : 200).send(result);
+      });
       app.get("/api/mafi-readers/github-trending", async (request, reply) => {
         const since = (request.query as { since?: string }).since ?? "daily";
         if (!isTrendSince(since)) return reply.code(400).send({ message: "since 只能是 daily、weekly 或 monthly" });

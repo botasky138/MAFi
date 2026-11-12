@@ -14,5 +14,6 @@ export async function readTrend(since: TrendSince, request: Request): Promise<Tr
   return apiGet<TrendWindowResult>(`/api/mafi-readers/github-trending?since=${since}`, { signal: request.signal }).catch(() => ({
     status: "unavailable", since, sourceUrl, fetchedAt: null, attemptedAt: null, nextRefreshAt: null,
     trigger: null, message: "暂时连不上本站后端，稍后再刷新试试。", items: [], demo: false, featured: [], starsAt: null, live: false,
+    rankedAt: null, previousAt: null, dropped: [],
   }));
 }

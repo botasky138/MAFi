@@ -6,6 +6,7 @@ import Fastify from "fastify";
 import type { GuardedFetchOptions, GuardedResponse } from "@aihot/backend/lib/http-fetch";
 import { FileReaderStore, type ReaderStore } from "../backend/cache.ts";
 import { createReaders, isLocalSite, type ReaderFetch } from "../backend/readers.ts";
+import { config } from "@aihot/backend/config";
 import { createReaderServer } from "../server.ts";
 import { parseCodex, recentCodex } from "../backend/validate.ts";
 
@@ -263,6 +264,121 @@ test("AA full pagination preserves official response order, nulls, version and p
   await h.readers().aaModels();
   assert.equal(urls.length, 4);
   assert.equal((store.values.get("aa-models") as { requestCount: number }).requestCount, 2);
+});
+
+test("the AA page's pull ignores the 24-hour TTL, says what is new, and waits 5 minutes before the next one", async () => {
+  let version = 1;
+  const urls: string[] = [];
+  const h = harness(async (url) => {
+    urls.push(url);
+    const page = Number(new URL(url).searchParams.get("page"));
+    const ids = version === 1 ? ["a", "b"] : ["a", "c"];
+    return response(aaPage(page, 2, ids[page - 1]));
+  }, new MemoryStore(), "http://localhost:3000", "synthetic-key");
+  const r = h.readers();
+  const first = await r.aaModels();
+  assert.deepEqual(first.data!.models.map((m) => m.id), ["a", "b"]);
+  assert.equal(first.refresh!.cost, 2);
+  assert.equal(first.refresh!.remaining, 98);
+  assert.equal(first.refresh!.manualAfter, null);
+  h.advance(60 * 60_000);
+  version = 2;
+  assert.deepEqual((await r.aaModels()).data!.models.map((m) => m.id), ["a", "b"]); // the TTL still holds for page loads
+  assert.equal(urls.length, 2);
+  const pulled = await r.aaRefresh();
+  assert.equal(pulled.refused, null);
+  assert.equal(urls.length, 4);
+  assert.equal(pulled.total, 2);
+  assert.deepEqual(pulled.added, [{ id: "c", name: "Model c" }]);
+  assert.equal(pulled.addedCount, 1);
+  assert.equal(pulled.removedCount, 1);
+  assert.equal(pulled.fetchedAt, new Date(AT + 60 * 60_000).toISOString());
+  assert.equal("data" in pulled, false);
+  assert.deepEqual((await r.aaModels()).data!.models.map((m) => m.id), ["a", "c"]);
+  h.advance(4 * 60_000);
+  const early = await r.aaRefresh();
+  assert.equal(early.refused?.reason, "cooldown");
+  assert.equal(early.refused?.until, new Date(AT + 65 * 60_000).toISOString());
+  assert.equal(early.refresh!.manualAfter, new Date(AT + 65 * 60_000).toISOString());
+  assert.equal(urls.length, 4);
+  h.advance(60_000);
+  const [again, twice, read] = await Promise.all([r.aaRefresh(), r.aaRefresh(), r.aaModels()]); // a double click
+  assert.equal(again.refused, null);
+  assert.deepEqual(again.added, []);
+  assert.equal(twice.refused?.reason, "cooldown");
+  assert.equal(read.fetchedAt, again.fetchedAt);
+  assert.equal(urls.length, 6);
+});
+
+test("the AA pull goes by AA's own count of what is left, falls back to ours, and keeps the list when AA fails", async () => {
+  let remaining = 50;
+  let fail = false;
+  let calls = 0;
+  const reset = Math.floor((AT + 3 * 60 * 60_000) / 1000);
+  const store = new MemoryStore();
+  const h = harness(async (url) => {
+    calls++;
+    if (fail) return response({ error: "busy" }, 503);
+    const page = Number(new URL(url).searchParams.get("page"));
+    remaining -= 1;
+    return response(aaPage(page, 2), 200, { "x-ratelimit-remaining": String(remaining), "x-ratelimit-reset": String(reset) });
+  }, store, "http://localhost:3000", "synthetic-key");
+  const r = h.readers();
+  await r.aaModels();
+  assert.equal((await r.aaModels()).refresh!.remaining, 48); // AA's count, though only 2 of ours are spent
+  assert.equal((await r.aaModels()).refresh!.resetAt, new Date(reset * 1000).toISOString());
+  remaining = 2; // other clients of the same key spent the rest
+  h.advance(10 * 60_000);
+  assert.equal((await r.aaRefresh()).refused, null);
+  h.advance(10 * 60_000);
+  const short = await r.aaRefresh();
+  assert.equal(short.refused?.reason, "quota");
+  assert.equal(short.refused?.until, new Date(reset * 1000).toISOString());
+  assert.equal(calls, 4);
+  h.advance(3 * 60 * 60_000); // AA's window reset: our own count decides again
+  remaining = 100;
+  fail = true;
+  const before = await r.aaModels();
+  const failed = await r.aaRefresh();
+  assert.equal(failed.refused, null);
+  assert.equal(failed.status, "stale");
+  assert.deepEqual(failed.added, []);
+  assert.equal(failed.fetchedAt, before.fetchedAt);
+  const local = new MemoryStore();
+  const fresh = harness(async () => response(aaPage(1, 2)), local, "http://localhost:3000", "synthetic-key");
+  await fresh.readers().aaModels().catch(() => {});
+  local.values.set("aa-models", { ...(local.values.get("aa-models") as object), requestCount: 99, quotaWindowStart: AT, remaining: null, resetAt: null });
+  const spent = await fresh.readers().aaRefresh();
+  assert.equal(spent.refused?.reason, "quota");
+});
+
+test("only this site's own page can ask for an AA pull", async () => {
+  let calls = 0;
+  const h = harness(async (url) => { calls++; return response(aaPage(Number(new URL(url).searchParams.get("page")), 1)); }, new MemoryStore(), "http://localhost:3000", "synthetic-key");
+  const app = Fastify();
+  createReaderServer(h.readers()).http!(app);
+  const site = new URL(config.siteUrl);
+  const own = site.origin;
+  const twin = `${site.protocol}//${site.hostname === "localhost" ? "127.0.0.1" : "localhost"}${site.port ? `:${site.port}` : ""}`;
+  const post = (headers: Record<string, string>) => app.inject({ method: "POST", url: "/api/mafi-readers/aa-models/refresh", headers });
+  try {
+    const refused: Array<Record<string, string>> = [{}, { origin: own }, { origin: "https://evil.example", "x-mafi-action": "refresh" }, { "sec-fetch-site": "cross-site", "x-mafi-action": "refresh" }, { "x-mafi-action": "refresh" }];
+    for (const headers of refused) {
+      assert.equal((await post(headers)).statusCode, 403, JSON.stringify(headers));
+    }
+    assert.equal(calls, 0);
+    const ok = await post({ origin: own, "x-mafi-action": "refresh" });
+    assert.equal(ok.statusCode, 200);
+    assert.equal(ok.json().refused, null);
+    assert.equal(ok.headers["cache-control"], "private, no-store");
+    assert.equal(calls, 1);
+    const soon = await post({ origin: twin, "x-mafi-action": "refresh" });
+    assert.equal(soon.statusCode, 429);
+    assert.equal(soon.json().refused.reason, "cooldown");
+    const sameSite = await post({ "sec-fetch-site": "same-origin", "x-mafi-action": "refresh" });
+    assert.equal(sameSite.statusCode, 429);
+    assert.equal(calls, 1);
+  } finally { await app.close(); }
 });
 
 test("AA rejects duplicate IDs, mixed versions, changing pagination, unknown schema and bounded partial lists", async () => {

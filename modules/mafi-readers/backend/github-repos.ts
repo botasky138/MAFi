@@ -361,11 +361,19 @@ export interface Listed {
   items: readonly TrendItem[];
   /** Repos on all three lists, lowercase. */
   triple: ReadonlySet<string>;
+  /** The order this ranking replaced (rank 1 first); null before the order has ever changed. */
+  previous?: readonly string[] | null;
 }
 
-/** Decorates a list from the repo state and picks the 精选: the top three by period stars that are not 常驻. */
+/**
+ * Decorates a list from the repo state, marks each repo's move against the ranking this one replaced, and
+ * picks the 精选: the top three by period stars that are not 常驻.
+ */
 export function decorateList(state: RepoState, listed: Listed, now: number): { items: TrendItem[]; featured: string[] } {
-  const items = listed.items.map((item): TrendItem => {
+  const before = listed.previous ? new Map(listed.previous.map((name, i) => [name.toLowerCase(), i + 1])) : null;
+  const items = listed.items.map((item, index): TrendItem => {
+    const rankPrev = before?.get(item.fullName.toLowerCase()) ?? null;
+    const rank = index + 1;
     const row = state.repos[item.fullName.toLowerCase()];
     const latest = row?.points.at(-1);
     const total = latest ? latest[1] : item.starsTotal;
@@ -392,6 +400,8 @@ export function decorateList(state: RepoState, listed: Listed, now: number): { i
       topics,
       createdAt,
       badges,
+      rankPrev,
+      rankChange: before === null ? null : rankPrev === null ? "new" : rankPrev > rank ? "up" : rankPrev < rank ? "down" : "same",
     };
   });
   const featured = items.filter((item) => !item.badges.includes("resident")).slice(0, 3).map((item) => item.fullName);

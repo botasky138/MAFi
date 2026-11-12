@@ -192,6 +192,51 @@ test("精选 skips a repo that has sat on the daily list for 3 days; badges for 
   await rm(directory, { recursive: true, force: true });
 });
 
+test("rank moves are against the last different order: kept through identical refetches, then new, up, down and dropped", async () => {
+  const directory = await dir();
+  const page = (rows: Array<[string, number]>) => rows.map(([name, stars]) => card(name, `${stars} stars today`, "999")).join("");
+  let html = page([["a/one", 50], ["b/two", 40], ["c/three", 30], ["d/four", 20]]);
+  const fetch = async (url: string) => ({ status: 200, body: new URL(url).searchParams.get("since") === "daily" ? html : "", retryAfter: null });
+  const read = (at: number) => readGithubTrend({ dir: directory, now: () => at, enabled: true, fetch, since: "daily" });
+  const run = (at: number) => refreshGithubTrend({ dir: directory, now: () => at, enabled: true, fetch, sleep: async () => {}, mode: "due" });
+
+  await run(AT);
+  const first = await read(AT);
+  assert.equal(first.rankedAt, new Date(AT).toISOString());
+  assert.equal(first.previousAt, null);
+  assert.deepEqual(first.items.map((item) => item.rankChange), [null, null, null, null]);
+
+  html = page([["a/one", 60], ["b/two", 45], ["c/three", 31], ["d/four", 21]]); // more stars, same order
+  await run(AT + 30 * 60_000);
+  const same = await read(AT + 30 * 60_000);
+  assert.equal(same.rankedAt, first.rankedAt);
+  assert.equal(same.previousAt, null);
+
+  html = page([["c/three", 90], ["a/one", 61], ["e/five", 50], ["b/two", 46]]); // c up 2, a down 1, e new, b down 2, d gone
+  await run(AT + 60 * 60_000);
+  const moved = await read(AT + 60 * 60_000);
+  assert.equal(moved.rankedAt, new Date(AT + 60 * 60_000).toISOString());
+  assert.equal(moved.previousAt, new Date(AT + 30 * 60_000).toISOString());
+  assert.deepEqual(moved.items.map((item) => [item.fullName, item.rankChange, item.rankPrev]), [
+    ["c/three", "up", 3], ["a/one", "down", 1], ["e/five", "new", null], ["b/two", "down", 2],
+  ]);
+  assert.deepEqual(moved.dropped, ["d/four"]);
+
+  html = page([["c/three", 95], ["a/one", 62], ["e/five", 55], ["b/two", 47]]); // same order again: the arrows stay
+  await run(AT + 90 * 60_000);
+  const kept = await read(AT + 90 * 60_000);
+  assert.equal(kept.rankedAt, moved.rankedAt);
+  assert.deepEqual(kept.items.map((item) => item.rankChange), ["up", "down", "new", "down"]);
+  assert.deepEqual(kept.dropped, ["d/four"]);
+
+  html = page([["a/one", 99], ["c/three", 96], ["e/five", 56], ["b/two", 48]]); // a and c swap
+  await run(AT + 120 * 60_000);
+  const swapped = await read(AT + 120 * 60_000);
+  assert.deepEqual(swapped.items.map((item) => [item.fullName, item.rankChange]), [["a/one", "up"], ["c/three", "down"], ["e/five", "same"], ["b/two", "same"]]);
+  assert.deepEqual(swapped.dropped, []);
+  await rm(directory, { recursive: true, force: true });
+});
+
 test("only the exact string true enables a switch", () => {
   assert.equal(explicitlyEnabled("true"), true);
   for (const value of [undefined, "", "false", "TRUE", "1", " true"]) assert.equal(explicitlyEnabled(value), false);

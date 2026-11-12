@@ -23,6 +23,9 @@ export const CATEGORY_LABELS: Record<TrendCategory, string> = {
  */
 export type TrendBadge = "new" | "surge" | "resident" | "triple";
 
+/** new: not on the ranking this one replaced. up/down: moved; same: kept its place. */
+export type RankChange = "new" | "up" | "down" | "same";
+
 export const BADGE_LABELS: Record<TrendBadge, string> = { new: "新星", surge: "爆发", resident: "常驻", triple: "三榜" };
 
 export interface TrendItem {
@@ -46,6 +49,10 @@ export interface TrendItem {
   topics: string[] | null;
   createdAt: string | null;
   badges: TrendBadge[];
+  /** Rank in the ranking this one replaced; null when the repo was not on it, or there is none yet. */
+  rankPrev: number | null;
+  /** Against the ranking this one replaced; null until the order has changed once. */
+  rankChange: RankChange | null;
 }
 
 export interface TrendWindowResult {
@@ -65,6 +72,12 @@ export interface TrendWindowResult {
   starsAt: string | null;
   /** Stars were polled within the last 20 minutes. */
   live: boolean;
+  /** When the current order first appeared; the page plays the moves once per browser for each value. */
+  rankedAt: string | null;
+  /** The last fetch of the ranking this one replaced (the moves are against it); null before the first change. */
+  previousAt: string | null;
+  /** Repos on that ranking that are off this one. */
+  dropped: string[];
 }
 
 export function isTrendSince(value: string | null): value is TrendSince {
