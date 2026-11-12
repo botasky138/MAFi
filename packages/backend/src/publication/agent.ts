@@ -2,7 +2,7 @@
 // ability. Agents only fetch these addresses and relay what comes back, so which data answers a
 // question, how it reads and what to tell the user are decided here, on the server. Programs keep
 // reading the v1 JSON, whose fields do not change.
-import { ACCESS, EDITION_WHEN, ITEM_COPY, POLICY, SITE, subjectAfter } from "@aihot/site";
+import { ACCESS, EDITION_WHEN, HOT, ITEM_COPY, POLICY, SITE, subjectAfter } from "@aihot/site";
 import { CATEGORIES } from "@aihot/industry/taxonomy";
 import { MCP_TOOL_NAMES as T } from "@aihot/contracts/mcp";
 import { CATEGORY_LABELS, isCategoryKey, PUBLIC_API_CATEGORY_KEYS, toPublicApiCategory, type PublicApiCategoryKey } from "@aihot/contracts/taxonomy";
@@ -116,7 +116,7 @@ export function hotAnswer(res: HotTopics, limit: number, via: Via): string {
       "",
     ];
   });
-  return answer([`# ${SITE.name} 当前热点 Top ${items.length}`, "", "多个独立信源正在同时讨论的事件，按名次排列；时间为北京时间。"], data, [
+  return answer([`# ${SITE.name} 当前热点 Top ${items.length}`, "", `${HOT.selectedVote ? "多个独立信源在报道、或有报道进了精选的事件" : "多个独立信源正在同时讨论的事件"}，按名次排列；时间为北京时间。`], data, [
     "按名次完整列出，写「第 N 名」；不要说热度分数，也不要把信源数量说成热度。",
     via === "http" ? "用户追问某个事件的来龙去脉、时间线或最新进展时，请求它的「来龙去脉」地址；不要自己拼地址。" : `用户追问某个事件的来龙去脉、时间线或最新进展时，用 ${T.story} 和上面给出的 public_id；不要猜。`,
     NO_INTERNALS,

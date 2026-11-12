@@ -3,7 +3,7 @@ import { IntentLink } from "../components/ui/IntentLink";
 import { Link, useLoaderData, useLocation } from "react-router";
 import type { Route } from "./+types/story";
 import type { StoryDetail, StoryReportView } from "@aihot/contracts/site";
-import { SITE } from "@aihot/site";
+import { HOT, hotSpan, SITE } from "@aihot/site";
 import { cachedPage, loadOr404 } from "../lib/api.server";
 import { pageReuse } from "../lib/page-reuse";
 import { breadcrumbLd, pageMeta, storyLd, titled } from "../lib/seo";
@@ -152,7 +152,7 @@ export default function StoryPage() {
   }, [entry, filter, order]);
   const status = STATUS[story.status];
   // A settled story nobody watched (history pages) has no heat to explain or chart.
-  const observed = story.status !== "settled" || story.heat.length > 0 || story.whyHot.participants48h > 0 || story.whyHot.rank !== null;
+  const observed = story.status !== "settled" || story.heat.length > 0 || story.whyHot.participantsInWindow > 0 || story.whyHot.rank !== null;
   const sections = observed ? [SECTIONS.overview, SECTIONS.reports, SECTIONS.heat] : [SECTIONS.overview, SECTIONS.reports];
   const [reading, goSection] = useCurrentSection(sections);
   const counts = {
@@ -363,8 +363,8 @@ export default function StoryPage() {
           {observed && (
             <RailCard title="为什么热">
               <p className="text-[12.5px] leading-[1.75] text-ink-3">
-                过去 48 小时，有 <b className="num font-semibold text-ink">{story.whyHot.participants48h}</b> 个账号或机构报道、讨论了这件事，最近 6 小时新增{" "}
-                <b className="num font-semibold text-ink">{story.whyHot.newParticipants6h}</b> 个。
+                过去 {hotSpan(HOT.windowHours)}，有 <b className="num font-semibold text-ink">{story.whyHot.participantsInWindow}</b> 个账号或机构报道、讨论了这件事，最近 6 小时新增{" "}
+                <b className="num font-semibold text-ink">{story.whyHot.newParticipants6h}</b> 个{story.whyHot.selectedVote ? "；有报道进了精选，另算一票" : ""}。
               </p>
               {!story.whyHot.observationComplete && <p className="mt-2 text-[12px] leading-relaxed text-ink-4">这段时间有些来源没能完整读到，实际参与的可能更多。</p>}
               <p className="mt-2 text-[12px] text-ink-4">

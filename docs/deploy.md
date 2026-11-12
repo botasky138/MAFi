@@ -87,6 +87,14 @@ docker compose run --rm setup && docker compose up -d
 
 下面按时间从新到旧列出每次更新要注意的事。
 
+#### 热点榜：7 天窗口，精选算一票（2026-11-12）
+
+没有数据库迁移，没有新的环境变量。`site/site.ts` 多了 `HOT`（窗口、减半时间、精选票，见 [把它改成你的行业](customize.md)）；**自己维护 `site/site.ts` 的站，合并时照模板加上 `HOT`**，不加通不过类型检查。想保持原来的榜单，写 `windowHours: 48, halfLifeHours: 24, selectedVote: false`。
+
+本站改成 7 天窗口、3 天减半、精选算一票。更新后 5 分钟内的下一次 `hot.rank` 就按新规则排；事件页的热度曲线按新规则现算，每小时存下的热度快照（`story_heat_hourly`，首页和热点榜卡片上的 24 小时小曲线用它）从更新后的下一个整点起按新规则写，之前的点仍是旧规则的值，所以那条小曲线在第一天会在更新时刻跳一下。旧的榜单记录留在 `hot_rankings`，规则名 `rule_version` 从 `heat-v1-48h-halflife24h` 变成 `heat-v1-168h-halflife72h-selected-vote`。
+
+公开接口的格式有两处变化：`/api/site/hot` 的 `windowHours` 现在是 168，条目的 `badges` 可能多一个 `selected`；`/api/site/stories/:id` 的 `whyHot.participants48h` 改名为 `participantsInWindow`（数的是窗口内的参与者），并多了 `selectedVote`。`/api/v1/hot-topics` 和 MCP 的格式不变，只是条目更多。
+
 #### GitHub 趋势排名变化与 AA 手动拉取（2026-11-10）
 
 没有数据库迁移，没有新的环境变量或开关，不删除已有缓存。旧的缓存文件照常读：

@@ -1,13 +1,15 @@
 // Heat is counted from the evidence as it stands: a withdrawn report no longer counts and a source
 // counts in its current role; participants are independent actors (one company's channels are one,
-// every Hacker News author is one); the change compares with the earlier time's full 48-hour window,
-// and a source added since then is left out of the comparison.
+// every Hacker News author is one); the change compares with the earlier time's full window
+// (site/site.ts HOT), and a source added since then is left out of the comparison. Where the site
+// counts a selected report as a vote of its own, one source and one selected report reach the board.
 import { tag } from "./setup.ts";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { after, test } from "node:test";
 import { closeDb, sql } from "@aihot/backend/db";
-import { heatRows, snapshotHeat } from "@aihot/backend/events/hot";
+import { HOT } from "@aihot/site";
+import { computeHotRanking, heatIndex, heatRows, snapshotHeat, storedHotRanking } from "@aihot/backend/events/hot";
 
 const T = `hot-${tag()}`;
 const AT = new Date("2099-03-01T12:00:00Z");
@@ -23,7 +25,7 @@ async function source(key: string, opts: { mode?: string; owner?: string; create
 }
 
 let n = 0;
-async function signal(story: number, sourceId: string, hoursBefore: number, opts: { author?: string; kind?: string; withdrawn?: boolean; role?: string | null; composite?: boolean; standalone?: boolean } = {}) {
+async function signal(story: number, sourceId: string, hoursBefore: number, opts: { author?: string; kind?: string; withdrawn?: boolean; role?: string | null; composite?: boolean; standalone?: boolean; selected?: boolean } = {}) {
   n += 1;
   const id = `${T}-a${n}`;
   const at = new Date(AT.getTime() - hoursBefore * H);
@@ -31,8 +33,8 @@ async function signal(story: number, sourceId: string, hoursBefore: number, opts
             VALUES (${id}, ${sourceId}, ${id}, ${`https://example.org/${id}`}, ${id}, ${opts.author ?? null}, ${at}, ${at})`;
   const [analysis] = await sql`INSERT INTO analyses (article_id,input_revision,origin,output)
     VALUES (${id},1,'rule',${sql.json({scope:opts.composite ? 'composite' : 'single'})}) RETURNING id`;
-  await sql`INSERT INTO publications (article_id, analysis_id, revision, visibility, eligible, selected, title, source_id, channel, first_party, url, discovered_at, timeline_at, body_mode, sort_at)
-    VALUES (${id}, ${analysis!.id}, 1, ${opts.withdrawn ? 'withdrawn' : 'public'}, true, false, ${id}, ${sourceId}, 'news', false, ${`https://example.org/${id}`}, ${at}, ${at}, 'summary', ${at})`;
+  await sql`INSERT INTO publications (article_id, analysis_id, revision, visibility, eligible, selected, visible_after, title, source_id, channel, first_party, url, discovered_at, timeline_at, body_mode, sort_at)
+    VALUES (${id}, ${analysis!.id}, 1, ${opts.withdrawn ? 'withdrawn' : 'public'}, true, ${opts.selected ?? false}, ${opts.selected ? new Date(0) : null}, ${id}, ${sourceId}, 'news', false, ${`https://example.org/${id}`}, ${at}, ${at}, 'summary', ${at})`;
   if (opts.role !== null) {
     const [f] = await sql`INSERT INTO facts (public_id,story_id,title) VALUES (${id},${story},${id}) RETURNING id`;
     await sql`INSERT INTO fact_articles (fact_id,article_id,role) VALUES (${f!.id},${id},${opts.role ?? 'report'})`;
@@ -105,12 +107,12 @@ test("publisher attribution repairs participant identity without rewriting store
   assert.equal((await sql`SELECT source_id FROM story_signals WHERE article_id=${corrected}`)[0]!.source_id,discovery,'the original evidence remains auditable');
 });
 
-test("the change compares with the earlier time's full 48-hour window, without sources added since", async () => {
+test("the change compares with the earlier time's full window, without sources added since", async () => {
   const s = await story();
   await signal(s, await source("now-1"), 1);
   await signal(s, await source("now-2"), 1);
-  // Seen 50 hours ago only: outside the current window, inside the one six hours earlier.
-  await signal(s, await source("old"), 50);
+  // Seen two hours before the window only: outside the current window, inside the one six hours earlier.
+  await signal(s, await source("old"), HOT.windowHours + 2);
   const r = await rowOf(s);
   assert.equal(Number(r?.participants), 2);
   assert.ok(Number(r?.heat_prev) > 0, "the earlier window keeps its first six hours");
@@ -124,6 +126,24 @@ test("the change compares with the earlier time's full 48-hour window, without s
   assert.equal(Number(u?.participants), 2);
   assert.equal(Number(u?.uncomparable), 1, "the source added three hours ago is left out of the change");
   assert.ok(Number(u?.heat_obs) < Number(u?.heat));
+});
+
+test("a selected report is a vote of its own where the site counts one; one source alone is not hot", async () => {
+  const picked = await story();
+  await signal(picked, await source("picked"), 3, { selected: true });
+  const single = await story();
+  await signal(single, await source("single"), 3);
+  const p = await rowOf(picked);
+  assert.equal(Number(p?.participants), 1, "the selected vote is not a participant");
+  assert.equal(p?.picked, HOT.selectedVote);
+  const one = 0.5 ** (3 / HOT.halfLifeHours);
+  assert.equal(heatIndex(Number(p?.heat)), heatIndex(HOT.selectedVote ? 2 * one : one));
+  assert.equal((await rowOf(single))?.picked, false);
+  await computeHotRanking(AT);
+  const board = new Set((await storedHotRanking())!.entries.map((e) => e.storyId));
+  assert.equal(board.has(picked), HOT.selectedVote);
+  assert.equal(board.has(single), false, "one source without a selected report stays off the board");
+  if (HOT.selectedVote) assert.deepEqual((await storedHotRanking())!.entries.find((e) => e.storyId === picked)?.badges, ["new", "selected"]);
 });
 
 // Snapshot batching must keep incomplete-hour repair, upsert idempotency and corrected cohort
