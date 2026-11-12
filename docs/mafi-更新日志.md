@@ -10,6 +10,7 @@
 - 接口：`/api/site/hot` 的 `windowHours` 为 168，`badges` 可能有 `selected`；`/api/site/stories/:id` 的 `whyHot.participants48h` 改名 `participantsInWindow`，新增 `selectedVote`。v1 与 MCP 格式不变。
 - 已知：首页和热点卡片上的 24 小时小曲线用每小时快照，更新前的点是旧规则的值，第一天会在更新时刻跳一下。
 - 验证：typecheck 通过；热点相关数据库测试 73 项只有 main 上同样失败的 1 项；新增测试「精选报道另算一票，单一来源不上榜」；`publication.test` 的撤稿离榜测试改成非精选报道（两篇都是精选时，撤下一篇后剩下那篇仍有两票，事件按新规则留在榜上）。无数据库测试和架构测试与 main 相同。
+- 排序：热点页改回按热度排（名次 1 在最上面），和卡片上的名次、首页「当前热点」一致。11-01 的 9dbac65 把热点页改成按最新进展时间从新到旧排，名次因此对不上；榜单只有一两条时看不出来。精选、动态仍按时间排。
 - 回滚：`git revert ccc6197`；或只改回原口味：`HOT` 写 `windowHours: 48, halfLifeHours: 24, selectedVote: false`，重启 API、worker、Web。
 
 ## 2026-11-10 14:02（北京时间）GitHub 趋势排名变化；AA 模型榜手动拉取最新（5066325, cfa2d3d）

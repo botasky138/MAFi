@@ -188,7 +188,7 @@ export interface HotParticipant {
 
 export interface HotEntryView {
   rank: number;
-  /** Latest public report time of the story (ISO, UTC); the board is ordered by it, newest first. */
+  /** Latest public report time of the story (ISO, UTC). The board is ordered by rank (heat), not by this. */
   latestAt?: string;
   story: StoryRef;
   heat: number;

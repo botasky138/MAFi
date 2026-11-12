@@ -247,11 +247,8 @@ export async function loadHot(): Promise<HotResponse> {
   const ranking = await latestHotRanking();
   if (!ranking) return { computedAt: null, windowHours: HOT.windowHours, entries: [] };
   const floorMs = listingDayFloor().getTime();
-  // 热点 board order: newest first by the story's latest public report time (publish time, not crawl);
-  // a missing/invalid time sorts last, then the stored heat rank.
-  const latestMs = (e: { latestAt: string }) => { const t = Date.parse(e.latestAt); return Number.isFinite(t) ? t : Number.NEGATIVE_INFINITY; };
-  const freshHotEntries = ranking.entries.filter((e) => Date.parse(e.latestAt) >= floorMs)
-    .sort((a, b) => (latestMs(b) - latestMs(a)) || a.rank - b.rank);
+  // The board keeps the ranking's order, heat first, like its rank numbers and the home strip.
+  const freshHotEntries = ranking.entries.filter((e) => Date.parse(e.latestAt) >= floorMs);
   if (!freshHotEntries.length) return { computedAt: ranking.computedAt, windowHours: HOT.windowHours, entries: [] };
   const freshRanking = { ...ranking, entries: freshHotEntries };
   const at = new Date(ranking.computedAt);
