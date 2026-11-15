@@ -163,6 +163,8 @@ async function appendLedger(tx: Tx, articleId: string, op: "upsert" | "remove", 
 }
 
 /**
+ * Seats are per fact, never per story: a launch, a later evaluation and a fix are separate news, each with
+ * its own card in its own place; the story page tells how they connect.
  * Ordinary reports share one selected seat per fact: among the fact's selected public reports,
  * the representative (first-party, full text, higher score, earliest) takes it, and a
  * change of representative removes the old one and adds the new one.
@@ -221,16 +223,19 @@ async function syncLedger(tx: Tx, articleId: string, now: Date): Promise<"upsert
 }
 
 export async function publishArticle(articleId: string, options: PublishOptions = {}): Promise<PublishResult | null> {
-  return sql.begin(async (tx) => {
-    await tx`SELECT 1 FROM articles WHERE id = ${articleId} FOR UPDATE`;
-    const [previous] = await tx<{ story_id: number | null }[]>`SELECT story_id FROM publications WHERE article_id = ${articleId}`;
-    const result = await publishArticleTx(tx, articleId, options);
-    // Body and translation writes announce their own changes; an unchanged projection needs no purge.
-    if (previous && result?.changed) await emit("articleChanged", {
-      id: articleId, reason: "republication", kind: result.changeKind, reduced: result.reduced, previousStoryIds: previous.story_id === null ? [] : [previous.story_id],
-    }, tx);
-    return result;
-  });
+  return sql.begin((tx) => republishTx(tx, articleId, options));
+}
+
+/** publishArticle inside the caller's transaction: the write behind it and every exit commit together. */
+export async function republishTx(tx: Tx, articleId: string, options: PublishOptions = {}): Promise<PublishResult | null> {
+  await tx`SELECT 1 FROM articles WHERE id = ${articleId} FOR UPDATE`;
+  const [previous] = await tx<{ story_id: number | null }[]>`SELECT story_id FROM publications WHERE article_id = ${articleId}`;
+  const result = await publishArticleTx(tx, articleId, options);
+  // Body and translation writes announce their own changes; an unchanged projection needs no purge.
+  if (previous && result?.changed) await emit("articleChanged", {
+    id: articleId, reason: "republication", kind: result.changeKind, reduced: result.reduced, previousStoryIds: previous.story_id === null ? [] : [previous.story_id],
+  }, tx);
+  return result;
 }
 
 export async function publishArticleTx(tx: Tx, articleId: string, options: PublishOptions = {}): Promise<PublishResult | null> {
@@ -288,6 +293,8 @@ export async function publishArticleTx(tx: Tx, articleId: string, options: Publi
     && (!article.backfill || article.published_at !== null || !!options.releasedAt);
   const selectionCandidate = isSelectable(eligible, judgedSelected, source.tier);
   // Scoring nominates a report; a completed identity/value decision admits it to selection.
+  // Nothing releases a candidate without one: a timeout, a missing or invalid answer is no evidence the
+  // report is new, so it waits (readable in the pool) rather than risk a repeat in the selection and its push.
   // A historical import already has its public decision. Preserve that confirmed state on rebuild.
   const selected = selectionCandidate && article.grouping_status === "complete"
     && (f.selected === true || article.selection_adds_value !== false);
