@@ -465,7 +465,7 @@ export default function GithubTrendPage() {
       {featured.length > 0 && (
         <section aria-labelledby="gh-featured" className="mt-6">
           <h2 id="gh-featured" className="mb-3 text-[12px] font-semibold tracking-[0.18em]" style={{ color: C.gold }}>精选</h2>
-          <ol className="grid gap-3 lg:grid-cols-3">
+          <ol className="grid gap-3 wide:grid-cols-3">
             {featured.map((item, i) => <FeaturedCard key={item.fullName} item={item} rank={rank.get(item.fullName)!} since={since} gain={gains[item.fullName.toLowerCase()]} play={playing} order={i} />)}
           </ol>
         </section>
