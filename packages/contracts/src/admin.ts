@@ -68,7 +68,7 @@ export const REPLACEABLE_SOURCE_KINDS = ["rss", "web_list", "json_list"] as cons
 export type ReplaceableSourceKind = typeof REPLACEABLE_SOURCE_KINDS[number];
 
 export interface AdminSourceUpdate {
-  patch: Partial<Pick<AdminSource, "name" | "enabled" | "interval_minutes" | "tier" | "participation_mode" | "signal_group_id" | "first_party" | "owner_entity_id" | "site_fulltext" | "syndicate_fulltext" | "tags">> & (
+  patch: Partial<Pick<AdminSource, "name" | "enabled" | "interval_minutes" | "tier" | "selection_class" | "participation_mode" | "signal_group_id" | "first_party" | "owner_entity_id" | "site_fulltext" | "syndicate_fulltext" | "tags">> & (
     { kind?: never; config?: Record<string, unknown> } | { kind: ReplaceableSourceKind; config: Record<string, unknown> }
   );
   version: string;
@@ -80,6 +80,7 @@ export interface AdminSourceRow {
   name: string;
   kind: string;
   tier: string;
+  selection_class: string | null;
   participation_mode: string;
   enabled: boolean;
   health: string;
@@ -109,6 +110,8 @@ export interface AdminSource {
   first_party: boolean;
   owner_entity_id: string | null;
   tier: string;
+  /** A class of the industry pack's selection rules (industry/selection.ts): raises the tier's threshold. */
+  selection_class: string | null;
   participation_mode: string;
   signal_group_id: string | null;
   interval_minutes: number;

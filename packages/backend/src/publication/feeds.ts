@@ -14,7 +14,8 @@ import { textToHtml } from "../content/sanitize.ts";
 import type { FeedNotice } from "../modules.ts";
 import { publicCategoryCondition, exportTranslation, xView, type ItemRow } from "./items.ts";
 import { publicSourceName } from "./rules.ts";
-import { listedCondition, seatedCondition } from "./scope.ts";
+import { SELECTION } from "@aihot/industry/selection";
+import { browsedCondition, seatedCondition } from "./scope.ts";
 import { dailyUrl, itemUrl, periodUrl, siteUrl } from "./links.ts";
 
 interface FeedMeta {
@@ -30,7 +31,7 @@ interface FeedMeta {
 const CACHE = { edgeCacheSeconds: 300 };
 
 /** What the all feed leaves out: what the site names (FEED_COPY), then what the engine always leaves out. */
-const LEFT_OUT = [...FEED_COPY.allLeavesOut, "未审内容", "低相关条目", "已合并重复条目"];
+const LEFT_OUT = [...FEED_COPY.allLeavesOut, "未审内容", "低相关条目", `${SELECTION.browseFloor} 分以下条目`, "已合并重复条目"];
 
 const FEEDS: FeedMeta[] = [
   { id: "selected", path: "/feed.xml", title: `${SITE.name} — 精选`, description: `最新 50 条 ${SITE.name} 精选摘要，保留标题、站内阅读与原文入口；需要阅读器内全文可改订 /feed/full.xml。`, homePath: "/", pollHintMinutes: 30, ...CACHE },
@@ -158,7 +159,7 @@ type NoticeFor = (feedPath: string) => FeedNotice | null;
 export async function itemFeed(kind: ItemFeedKind, category: PublicApiCategoryKey | null, { now = new Date(), notice }: { now?: Date; notice?: NoticeFor } = {}): Promise<string> {
   const includeContent = kind === "selected-full";
   const scope = kind === "all"
-    ? sql`${listedCondition(now)} AND coalesce(p.published_at, p.discovered_at) > ${now}::timestamptz - interval '7 days'
+    ? sql`${browsedCondition(now)} AND coalesce(p.published_at, p.discovered_at) > ${now}::timestamptz - interval '7 days'
         AND coalesce(p.published_at, p.discovered_at) <= ${now}`
     : sql`${seatedCondition(now)} ${publicCategoryCondition(category)}
         ${category ? sql`AND coalesce(p.published_at, p.discovered_at) >= ${new Date(now.getTime() - 7 * 86400_000)}` : sql``}`;
