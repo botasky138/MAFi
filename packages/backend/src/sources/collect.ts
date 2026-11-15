@@ -17,6 +17,8 @@ import { admitListing, filterPublicationWindow } from "./filters.ts";
 import { fetchJsonList } from "./json-list.ts";
 import { fetchXSearch, planXShards, readXSearch, shardHandle, shardQuery, selfThreadHandle, SHARDABLE_SQL, tweetToCandidate, type XBacklog } from "./x.ts";
 import { FetchError, type Candidate, type SourceRow } from "./types.ts";
+import { pageFetchable } from "../content/extract.ts";
+import { fetchArticleCover, hasPicture, type Cover } from "../content/cover.ts";
 
 export interface CollectResult {
   sourceId: string;
@@ -57,7 +59,8 @@ export async function storedDetails(identities: string[]): Promise<Map<string, S
 
 const DAY_MS = 86_400_000;
 
-export type CollectionCandidate = Candidate & { detailRules?: string };
+/** `cover`: what the entry's detail page declared (null: none), when its body came from that page. */
+export type CollectionCandidate = Candidate & { detailRules?: string; cover?: Cover | null };
 
 /** The detail rules in force; a page read under other rules is read again. */
 const detailRulesOf = (source: SourceRow) => (source.config.detail ? sha256(JSON.stringify(source.config.detail)) : null);
@@ -154,6 +157,7 @@ function applyDetail(c: CollectionCandidate, got: Awaited<ReturnType<typeof fetc
     c.bodyText = got.body.text;
     c.bodyStatus = "ok";
     if (!c.media?.length) c.media = got.body.images;
+    c.cover = got.body.cover ?? null;
   }
   // The page's date (its source's rule first, fetchDetail); a date-only listing value gives way to its time on the same day.
   if (got.publishedAt && (!c.publishedAt || Math.abs(got.publishedAt.getTime() - c.publishedAt.getTime()) < DAY_MS)) {
@@ -219,7 +223,19 @@ export async function enrichDetails(candidates: CollectionCandidate[], source: S
   return reads;
 }
 
-async function store(sourceId: string, runId: number, candidates: CollectionCandidate[], backfill: string | null) {
+/**
+ * The cover of an article whose body came with its entry (cover.ts). What its detail page declared is kept,
+ * also for an article stored before that page was read; for a new article whose body came without the page (a
+ * feed's text), the page's head is read once. An article without a body yet takes its cover when the body is
+ * extracted from its page.
+ */
+async function storeCover(articleId: string, created: boolean, c: CollectionCandidate, kind: string): Promise<void> {
+  if (c.bodyStatus !== "ok" || !c.bodyHtml || hasPicture(c.bodyHtml) || !pageFetchable(c.url, kind)) return;
+  const cover = c.cover !== undefined ? c.cover : created ? await fetchArticleCover(c.url) : null;
+  if (cover) await sql`UPDATE articles SET cover = ${sql.json(cover as never)} WHERE id = ${articleId} AND cover IS NULL`;
+}
+
+async function store(sourceId: string, runId: number, kind: string, candidates: CollectionCandidate[], backfill: string | null) {
   let created = 0;
   let revised = 0;
   for (const c of candidates) {
@@ -243,6 +259,7 @@ async function store(sourceId: string, runId: number, candidates: CollectionCand
     if (c.detailRules) await sql`UPDATE articles SET raw = jsonb_set(
       CASE WHEN jsonb_typeof(raw) = 'object' THEN raw ELSE '{}'::jsonb END,
       '{collectionDetail}', ${sql.json({ rules: c.detailRules })}) WHERE id = ${res.articleId} AND source_id = ${sourceId}`;
+    await storeCover(res.articleId, res.created, c, kind);
     if (res.created) created += 1;
     if (res.revised) revised += 1;
     // Extraction first when the source wants full text and none came with the listing, else analysis.
@@ -362,7 +379,7 @@ export async function collectSource(sourceId: string, opts: { force?: boolean; x
     // Kept while the listing offers them; a 304 offers no entries and keeps the last ones.
     if (found) nextCursor.detailDatedOut = datedOut;
     if (!d || !Object.keys(nextCursor.detailDatedOut ?? {}).length) delete nextCursor.detailDatedOut;
-    const stored = await store(sourceId, run!.id, candidates, firstImport ? "first-import" : null);
+    const stored = await store(sourceId, run!.id, source.kind, candidates, firstImport ? "first-import" : null);
     ({ created, revised } = stored);
     for (const id of await fillScheduledPublications(sourceId)) await queueProcessing(id);
 
@@ -434,7 +451,7 @@ export async function collectXShard(key: string, sourceIds: string[]): Promise<{
     for (const m of members) {
       const handle = shardHandle(m)!.toLowerCase();
       const mine = read.tweets.filter((t) => t.user.screen_name.toLowerCase() === handle);
-      const stored = await store(m.id, runs.get(m.id)!, admitListing(mine.map(tweetToCandidate), m), null);
+      const stored = await store(m.id, runs.get(m.id)!, m.kind, admitListing(mine.map(tweetToCandidate), m), null);
       found += mine.length;
       created += stored.created;
       const newest = mine.reduce((a, t) => (BigInt(t.id_str) > BigInt(a) ? t.id_str : a), String(m.cursor!.lastTweetId));

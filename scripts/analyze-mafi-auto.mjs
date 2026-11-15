@@ -260,12 +260,14 @@ if (!report.stoppedReason && tickReqs < reqCap) {
           return;
         }
         const hash = contentHash({ title: cur.title, bodyText: got.text, excerpt: cur.excerpt });
+        // The page's cover for a body without pictures of its own (content/cover.ts); one decided before stays.
+        const cover = got.cover ? sql.json(got.cover) : null;
         if (hash === cur.content_hash) {
           await updatePresentation(tx, art.id, { html: got.html, media: cur.media?.length ? cur.media : got.images });
-          await tx`UPDATE articles SET body_status='ok', body_html=${got.html}, body_text=${got.text}, updated_at=now() WHERE id=${art.id}`;
+          await tx`UPDATE articles SET body_status='ok', body_html=${got.html}, body_text=${got.text}, cover = coalesce(cover, ${cover}::jsonb), updated_at=now() WHERE id=${art.id}`;
         } else {
           await reviseMaterial(tx, art.id, {
-            set: sql`body_html = ${got.html}, body_text = ${got.text}, body_status = 'ok',
+            set: sql`body_html = ${got.html}, body_text = ${got.text}, body_status = 'ok', cover = coalesce(cover, ${cover}::jsonb),
               media = CASE WHEN jsonb_array_length(media) = 0 THEN ${sql.json(got.images ?? [])}::jsonb ELSE media END`,
             hash,
             title: cur.title,

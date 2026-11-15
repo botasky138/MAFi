@@ -190,7 +190,7 @@ function resolveUrl(href: string, base?: string): string {
   }
 }
 
-const escHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+export const escHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 // A bare address ends at whitespace, CJK text, full-width punctuation or emoji; trailing sentence
 // punctuation belongs to the sentence, not the link.

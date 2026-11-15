@@ -1,5 +1,6 @@
 // Jina Reader (r.jina.ai): browser-rendered page text. Paid per request, reached through the egress
 // proxy, always behind receipts and the per-minute/hour/day budget (any zero stops it).
+import { randomUUID } from "node:crypto";
 import { credential } from "../config.ts";
 import { guardedFetch } from "../lib/http-fetch.ts";
 import { assertPageContent, contentDocument, UnavailablePageError } from "../lib/page-content.ts";
@@ -16,24 +17,27 @@ const CONTENT = "\nMarkdown Content:\n";
  * The receipt key is the target URL plus the day, so a same-day retry of an article's body or detail
  * reuses it. A listing is read afresh on every fetch (`perRead`): with the day key every later fetch saw
  * the morning's page. Each such read has a receipt of its own, so after one whose outcome is unknown the
- * next fetch pays for a new read instead of waiting on it.
+ * next fetch pays for a new read instead of waiting on it. A caller that reads on rounds of its own keys the
+ * read by its `round`: a retry of the round reuses it, the next round reads afresh.
  */
 export async function jinaRead(
   targetUrl: string,
-  opts: { purpose: string; subject: string; format?: "markdown" | "html"; cacheToleranceSeconds?: number; perRead?: boolean },
+  opts: { purpose: string; subject: string; format?: "markdown" | "html"; cacheToleranceSeconds?: number; perRead?: boolean; round?: string; removeSelector?: string },
 ): Promise<{ markdown: string; raw: string; receiptId: number }> {
   const key = credential("collectors", "JINA_API_KEY");
   if (!key) throw new Error("JINA_API_KEY is not configured");
   const base = (credential("collectors", "JINA_BASE_URL") ?? "https://r.jina.ai").replace(/\/$/, "");
   // A listing whose freshness matters (xAI news) caps how old Jina's cached rendering may be.
   const tolerance: Record<string, string> = Number.isInteger(opts.cacheToleranceSeconds) && opts.cacheToleranceSeconds! >= 0 ? { "x-cache-tolerance": String(opts.cacheToleranceSeconds) } : {};
-  const now = new Date().toISOString();
-  const day = opts.perRead ? now : now.slice(0, 10);
+  const remove: Record<string, string> = opts.removeSelector ? { "x-remove-selector": opts.removeSelector } : {};
+  const day = new Date().toISOString().slice(0, 10);
+  // A per-read listing is keyed by an ID of its own, not the clock: two reads can see the same clock reading.
+  const read = opts.round ? { round: opts.round } : opts.perRead ? { read: randomUUID() } : {};
   const receipt = await paidRequest(
-    { service: "jina", model: null, purpose: opts.purpose, subject: opts.subject, identity: { url: targetUrl, day, format: opts.format ?? "markdown" }, requestSummary: { url: targetUrl } },
+    { service: "jina", model: null, purpose: opts.purpose, subject: opts.subject, identity: { url: targetUrl, day, format: opts.format ?? "markdown", ...read, ...remove }, requestSummary: { url: targetUrl } },
     async () => {
       const res = await guardedFetch(`${base}/${targetUrl}`, {
-        headers: { authorization: `Bearer ${key}`, "x-return-format": opts.format ?? "markdown", accept: "text/plain", ...tolerance },
+        headers: { authorization: `Bearer ${key}`, "x-return-format": opts.format ?? "markdown", accept: "text/plain", ...tolerance, ...remove },
         timeoutMs: 60_000,
         maxBytes: 6 * 1024 * 1024,
       });
