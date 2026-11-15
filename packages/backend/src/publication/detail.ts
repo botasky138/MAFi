@@ -12,6 +12,7 @@ import { evidenceCondition, listedCondition } from "./scope.ts";
 import { itemUrl, siteUrl } from "./links.ts";
 import { hasItemPage, publicSourceName } from "./rules.ts";
 import { topicLinks, topicMembership } from "./topics.ts";
+import { firstDaily } from "./reports.ts";
 
 interface DetailRow extends ItemRow {
   body_html: string | null;
@@ -99,6 +100,7 @@ export async function loadItemDetail(id: string, language: "zh" | "original" = "
       outline: [],
       relatedStories: [],
       topics: [],
+      daily: null,
       indexable: false,
       markdownAvailable: false,
       group: null,
@@ -161,6 +163,7 @@ export async function loadItemDetail(id: string, language: "zh" | "original" = "
     outline: reading.outline,
     relatedStories: related,
     topics: topicLinks(row.topics),
+    daily: await firstDaily(id),
     indexable: row.indexable,
     markdownAvailable: markdownAvailable(row),
     group,

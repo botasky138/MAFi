@@ -151,6 +151,8 @@ export interface SiteItemDetail extends ItemSummary {
   relatedStories: StoryRef[];
   /** The topics the report belongs to. */
   topics: TopicLink[];
+  /** The first daily that carries it, while that issue lists it: the issue's key, and whether the issue leads with it. */
+  daily: { key: string; lead: boolean } | null;
   indexable: boolean;
   markdownAvailable: boolean;
   group: GroupInfo | null;
@@ -306,7 +308,7 @@ export interface ReportCitation {
   available: boolean;
   /** A daily entry: other sources that reported the event by the issue's cutoff. */
   otherSources?: number;
-  /** A daily entry's other developments of the event, or reports of the launch merged into it (titles only). */
+  /** A daily entry's other developments of the event, or reports of the launch merged into it: the first few it lists (titles only). */
   related?: ReportCitation[];
   /** A daily entry whose event an earlier daily covered: that issue's date. */
   followUp?: string;

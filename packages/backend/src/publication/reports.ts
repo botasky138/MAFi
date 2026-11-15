@@ -248,14 +248,18 @@ function citedSources(content: Record<string, any>, kind: "daily" | "periodic", 
   return new Set(cited.filter((e) => stillPublic(e, avail)).map((e) => (e.itemId ? avail.get(e.itemId)?.sourceId : undefined) ?? e.sourceId).filter(Boolean)).size;
 }
 
+/** How many of the event's other developments a daily entry lists under it. */
+const LISTED_DEVELOPMENTS = 4;
+
 /**
  * A cited entry with what a daily entry composed by rule adds: how many other sources reported the
- * event, the event's other developments listed under it (titles only), and the earlier daily it follows.
+ * event, the event's other developments listed under it (the first few, titles only), and the earlier
+ * daily it follows.
  */
 function entryCitation(raw: Record<string, any>, avail: Map<string, Availability>): ReportCitation {
   const citation = citationFrom(raw, avail);
   if (!citation.available) return citation;
-  const related: ReportCitation[] = (raw.related ?? []).map((r: Record<string, any>) => ({ ...citationFrom(r, avail), summary: null }));
+  const related: ReportCitation[] = (raw.related ?? []).slice(0, LISTED_DEVELOPMENTS).map((r: Record<string, any>) => ({ ...citationFrom(r, avail), summary: null }));
   return {
     ...citation,
     ...(Number(raw.sources) > 1 ? { otherSources: Number(raw.sources) - 1 } : {}),
@@ -322,6 +326,46 @@ async function neighbors(kind: ReportKind, key: string): Promise<{ prev: string 
   return { prev: row?.prev ?? null, next: row?.next ?? null };
 }
 
+/** Whether each report an issue cites is still public: its entries, what is listed under them, its flashes and picks. */
+function issueAvailability(c: Record<string, any>): Promise<Map<string, Availability>> {
+  const entries: Array<Record<string, any>> = [
+    ...(c.sections ?? []).flatMap((s: any) => s.items ?? []),
+    ...(c.flashes ?? []),
+    ...(c.themes ?? []).flatMap((t: any) => t.storyRefs ?? []),
+    ...(c.picks ?? []),
+  ];
+  const rawItems = [...entries, ...entries.flatMap((e) => e.related ?? [])];
+  return availability([...new Set(rawItems.map((i) => i.itemId).filter(Boolean))]);
+}
+
+/**
+ * An issue's citations as its page shows them, and the one it leads with: the item it names (an issue composed
+ * by rule records it), or the one standing in for it once withdrawn (issueLead); an earlier daily's written
+ * lead matched by title; without a lead of its own, its first highlight still public, else its first entry.
+ */
+function issueAsShown(kind: ReportKind, c: Record<string, any>, avail: Map<string, Availability>) {
+  const cite = (raw: Record<string, any>) => entryCitation(raw, avail);
+  const sections: ReportDetail["sections"] = kind === "daily"
+    ? (c.sections ?? []).map((s: any) => ({ label: String(s.label), summary: null, items: (s.items ?? []).map(cite) }))
+    : (c.themes ?? []).map((t: any) => ({ label: String(t.heading), summary: sectionSummary(t, avail), items: (t.storyRefs ?? []).map(cite) }));
+  const all = sections.flatMap((s) => s.items);
+  // A thin daily's highlights also name the reports it was filled with (picks), which never lead it.
+  const highlightable = [...all, ...(c.picks ?? []).map(cite)];
+  const highlightIds: string[] = c.highlights ?? [];
+  const highlights = highlightIds.length
+    ? highlightIds.map((id) => highlightable.find((x: ReportCitation) => x.itemId === id)).filter((x): x is ReportCitation => !!x)
+    : all.slice(0, 3);
+  const flashes: ReportCitation[] = (c.flashes ?? []).map(cite);
+  const gone = goneIn(avail);
+  const hasCitedLead = !!c.leadItemId || !!writtenLeadId(c, kind === "daily" ? "daily" : "periodic");
+  const named = hasCitedLead ? issueLead(c, kind === "daily" ? "daily" : "periodic", gone) : null;
+  const leadItem = hasCitedLead
+    ? all.find((x) => x.itemId === named?.itemId)
+    : kind === "daily" ? leadItemOf(c.lead?.title, highlights, all) : (highlights.find((x) => x.available) ?? all.find((x) => x.available));
+  const leadItemId = (kind === "daily" || c.leadItemId) && leadItem?.available ? leadItem.itemId : null;
+  return { sections, all, highlights, flashes, gone, hasCitedLead, named, leadItem, leadItemId };
+}
+
 export async function loadReport(kind: ReportKind, key: string): Promise<ReportDetail | null> {
   // Its number counts every issue of the kind up to it, as the index numbers them (reportIndexRows).
   const [r] = await sql<(Pick<ReportRow, "content" | "generated_at"> & { issue_number: number })[]>`
@@ -329,34 +373,11 @@ export async function loadReport(kind: ReportKind, key: string): Promise<ReportD
     FROM reports r WHERE r.kind = ${kind} AND r.key = ${key}`;
   if (!r) return null;
   const c = r.content;
-  const entries: Array<Record<string, any>> = [
-    ...(c.sections ?? []).flatMap((s: any) => s.items ?? []),
-    ...(c.flashes ?? []),
-    ...(c.themes ?? []).flatMap((t: any) => t.storyRefs ?? []),
-  ];
-  const rawItems = [...entries, ...entries.flatMap((e) => e.related ?? [])];
-  const avail = await availability([...new Set(rawItems.map((i) => i.itemId).filter(Boolean))]);
-  const cite = (raw: Record<string, any>) => entryCitation(raw, avail);
-
-  const sections: ReportDetail["sections"] = kind === "daily"
-    ? (c.sections ?? []).map((s: any) => ({ label: String(s.label), summary: null, items: (s.items ?? []).map(cite) }))
-    : (c.themes ?? []).map((t: any) => ({ label: String(t.heading), summary: sectionSummary(t, avail), items: (t.storyRefs ?? []).map(cite) }));
-  const all = sections.flatMap((s) => s.items);
-  const highlightIds: string[] = c.highlights ?? [];
-  const highlights = highlightIds.length
-    ? highlightIds.map((id) => all.find((x: ReportCitation) => x.itemId === id)).filter((x): x is ReportCitation => !!x)
-    : all.slice(0, 3);
+  const avail = await issueAvailability(c);
+  const { sections, all, highlights, flashes, gone, hasCitedLead, named, leadItem, leadItemId } = issueAsShown(kind, c, avail);
   const text = [c.lead?.leadParagraph ?? "", c.overview ?? "", ...all.flatMap((i: ReportCitation) => [`${i.title}${i.summary ?? ""}`, ...(i.related ?? []).map((r) => r.title)])].join("");
-  // An issue leads with the item it names (an issue composed by rule records it), or the one standing in
-  // for it once withdrawn (issueLead); an earlier daily's lead is matched by title. An earlier weekly or
-  // monthly's picture comes from its first highlight, captioned with it.
-  const gone = goneIn(avail);
-  const hasCitedLead = !!c.leadItemId || !!writtenLeadId(c, kind === "daily" ? "daily" : "periodic");
-  const named = hasCitedLead ? issueLead(c, kind === "daily" ? "daily" : "periodic", gone) : null;
   const overview = kind === "daily" ? c.overview ?? null : periodOverview(c, kind, gone);
-  const leadItem = hasCitedLead
-    ? all.find((x) => x.itemId === named?.itemId)
-    : kind === "daily" ? leadItemOf(c.lead?.title, highlights, all) : (highlights.find((x) => x.available) ?? all.find((x) => x.available));
+  // An earlier weekly's or monthly's picture is captioned with the item it comes from.
   const [{ prev, next }, picture] = await Promise.all([neighbors(kind, key), leadItem?.itemId && leadItem.available ? leadCover(leadItem.itemId) : null]);
   const cover = picture && leadItem ? { ...picture, caption: kind === "daily" || c.leadItemId ? null : leadItem.title } : null;
   const headline = kind === "daily" ? null : periodicHeadline(c);
@@ -372,11 +393,11 @@ export async function loadReport(kind: ReportKind, key: string): Promise<ReportD
       ? (named ? { title: named.title, leadParagraph: (kind === "daily" ? named.leadParagraph : overview) ?? "" } : null)
       : kind === "daily" ? c.lead ?? null
         : c.lead ? { ...c.lead, leadParagraph: overview ?? "" } : (headline ? { title: headline, leadParagraph: overview ?? "" } : null),
-    leadItemId: (kind === "daily" || c.leadItemId) && leadItem?.available ? leadItem.itemId : null,
+    leadItemId,
     overview,
     highlights,
     sections,
-    flashes: (c.flashes ?? []).map(cite),
+    flashes,
     cover,
     metrics: {
       ...c.metrics,
@@ -387,6 +408,26 @@ export async function loadReport(kind: ReportKind, key: string): Promise<ReportD
     prev,
     next,
   };
+}
+
+/**
+ * The first daily whose page lists an article, as an entry, a flash, a development listed under an entry
+ * still public or one of the highlights a thin issue was filled with, while the article itself is (an issue
+ * strikes through what it no longer lists); `lead`: that issue leads with it. Both as the issue's page shows
+ * them (issueAsShown).
+ */
+export async function firstDaily(itemId: string): Promise<{ key: string; lead: boolean } | null> {
+  // Every daily citing it anywhere, oldest first. strict: in lax mode `.**` reaches every array member a second time.
+  const issues = await sql<{ key: string; content: Record<string, any> }[]>`
+    SELECT key, content FROM reports
+    WHERE kind = 'daily' AND jsonb_path_exists(content, 'strict $.**.itemId ? (@ == $id)', jsonb_build_object('id', ${itemId}::text))
+    ORDER BY key`;
+  for (const { key, content } of issues) {
+    const shown = issueAsShown("daily", content, await issueAvailability(content));
+    const listed = [...shown.all.flatMap((e) => [e, ...(e.related ?? [])]), ...shown.flashes, ...shown.highlights];
+    if (listed.some((c) => c.itemId === itemId && c.available)) return { key, lead: shown.leadItemId === itemId };
+  }
+  return null;
 }
 
 /**
@@ -478,13 +519,20 @@ export async function dailyWithNotes(date: string | "latest") {
     : await sql<ReportRow[]>`SELECT kind, key, window_start, window_end, content, generated_at FROM reports WHERE kind = 'daily' AND key = ${date}`;
   if (!r) return null;
   const c = r.content;
-  const raw = [...(c.sections ?? []).flatMap((s: any) => s.items ?? []), ...(c.flashes ?? [])];
-  const avail = await availability([...new Set([...raw, ...raw.flatMap((i: any) => i.related ?? [])].map((i: any) => i.itemId).filter(Boolean))] as string[]);
+  const items = (c.sections ?? []).flatMap((s: any) => s.items ?? []);
+  const raw = [...items, ...(c.flashes ?? [])];
+  const picks = c.picks ?? [];
+  const avail = await availability([...new Set([...raw, ...raw.flatMap((i: any) => i.related ?? []), ...picks].map((i: any) => i.itemId).filter(Boolean))] as string[]);
   const ok = (i: any) => !i.itemId || (avail.get(i.itemId)?.available ?? true);
   const metadata = (i: any) => citationMetadata(i, avail.get(i.itemId));
   const links = (i: any) => ({ aihot: i.itemId ? itemUrl(i.itemId) : null, original: metadata(i).sourceUrl });
   const url = dailyUrl(r.key);
   const lead = c.lead || c.leadItemId ? issueLead(c, "daily", goneIn(avail)) : null;
+  // 今日看点 as the page lists them after the lead: the entries its highlights name and the reports a thin
+  // issue was filled with (picks), else its first entries; withdrawn ones are left out, as everywhere in v1.
+  const named: string[] = c.highlights?.length ? c.highlights : items.slice(0, 3).map((i: any) => i.itemId);
+  const highlights = named.map((id) => [...items, ...picks].find((i: any) => i.itemId === id))
+    .filter((i: any) => i && i.itemId !== lead?.itemId).slice(0, 3).filter(ok);
   const notes = new Map<string, DailyNote>();
   for (const i of raw.filter(ok)) {
     const related = (i.related ?? []).filter((x: any) => x.itemId && ok(x)).map((x: any) => ({ title: String(x.title), link: itemUrl(x.itemId) }));
@@ -516,6 +564,13 @@ export async function dailyWithNotes(date: string | "latest") {
         source: { name: metadata(i).sourceName },
         links: links(i),
         publishedAt: metadata(i).publishedAt ?? r.generated_at.toISOString(),
+        attribution: attribution(i.itemId ? itemUrl(i.itemId) : url),
+      })),
+      highlights: highlights.map((i: any) => ({
+        title: String(i.title),
+        summary: String(metadata(i).summary ?? ""),
+        source: { name: metadata(i).sourceName },
+        links: links(i),
         attribution: attribution(i.itemId ? itemUrl(i.itemId) : url),
       })),
     },
