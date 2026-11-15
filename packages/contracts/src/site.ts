@@ -188,13 +188,14 @@ export interface HotParticipant {
 
 export interface HotEntryView {
   rank: number;
-  /** Latest public report time of the story (ISO, UTC); the board is ordered by it, newest first. */
+  /** Latest public report time of the story (ISO, UTC). The board is ordered by rank (heat), not by this. */
   latestAt?: string;
   story: StoryRef;
   heat: number;
   trend: "up" | "down" | "flat" | "new" | "unknown";
   trendPct: number | null;
-  badges: Array<"surge" | "new" | "rising">;
+  /** selected: one of its reports is a 精选, which counts as a vote of its own where the site turns that on. */
+  badges: Array<"surge" | "new" | "rising" | "selected">;
   participantCount: number;
   sourceCount: number;
   sourceNames: string[];
@@ -211,6 +212,7 @@ export interface HotEntryView {
 
 export interface HotResponse {
   computedAt: string | null;
+  /** How far back the ranking looks (site/site.ts HOT.windowHours). */
   windowHours: number;
   entries: HotEntryView[];
 }
@@ -256,7 +258,10 @@ export interface StoryDetail {
   /** The current public report supplying latest; never inferred from an independently generated digest. */
   latestReport: { id: string } | null;
   whyHot: {
-    participants48h: number;
+    /** Independent participants inside the heat window (site/site.ts HOT.windowHours). */
+    participantsInWindow: number;
+    /** A selected report inside the window counts as one more vote (only where the site turns that on). */
+    selectedVote: boolean;
     newParticipants6h: number;
     recentReports24h: number;
     observationComplete: boolean;

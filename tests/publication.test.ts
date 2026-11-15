@@ -288,10 +288,12 @@ test("a withdrawn item leaves the hot board and the hot APIs at once, not at the
   const [story] = await sql<{ id: number }[]>`
     INSERT INTO stories (public_id, title, first_report_at, latest_at) VALUES (${publicId}, ${`HOT-${T}`}, now() - interval '2 hours', now()) RETURNING id`;
   const [fact] = await sql<{ id: number }[]>`INSERT INTO facts (public_id, story_id, title) VALUES (${`fact-${T}`}, ${story!.id}, ${`HOT-${T}`}) RETURNING id`;
-  // Two independent participants (heat counts sources, not reports).
+  // Two independent participants (heat counts sources, not reports), neither selected: a selected
+  // report would be a vote of its own (site/site.ts HOT.selectedVote) and keep the event on the board.
   const second = `${SOURCE}-hot-b`;
   await sql`INSERT INTO sources (id, name, kind, tier, participation_mode, next_fetch_at) VALUES (${second}, 'Test publication B', 'rss', 'T1', 'editorial', '2100-01-01')`;
   for (const [i, id] of [await article(), await article()].entries()) {
+    await sql`UPDATE analyses SET selected = false WHERE article_id = ${id}`;
     if (i) await sql`UPDATE articles SET source_id = ${second} WHERE id = ${id}`;
     await sql`INSERT INTO fact_articles (fact_id, article_id, role) VALUES (${fact!.id}, ${id}, 'report')`;
     await sql`INSERT INTO story_signals (story_id, article_id, participant_key, source_id, kind, observed_at)

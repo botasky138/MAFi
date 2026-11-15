@@ -1,7 +1,7 @@
 // Stories (events) and the hot ranking through the public read layer. The website sees heat values;
 // v1 and MCP only see ranks and counts.
 import type { HeatPoint, HotResponse, StoryDetail, StoryReportView } from "@aihot/contracts/site";
-import { SITE } from "@aihot/site";
+import { HOT, SITE } from "@aihot/site";
 import { sql } from "../db.ts";
 import { shared } from "../lib/cache.ts";
 import { proxiedImage, proxiedImageSet } from "../media/imgproxy.ts";
@@ -144,9 +144,11 @@ export async function loadStoryDetail(storyId: number, now = new Date()): Promis
   const content = await storyContent(storyId, now);
   if (!content) return null;
   const { s, reports, developments, latestReport, firstReportAt } = content;
-  const [why] = await sql<{ p48: number; p6: number; r24: number }[]>`
+  const windowStart = new Date(now.getTime() - HOT.windowHours * 3600_000);
+  const [why] = await sql<{ in_window: number; picked: boolean; p6: number; r24: number }[]>`
     WITH cs AS (SELECT * FROM ${currentSignals()} c WHERE story_id = ${storyId} AND observed_at <= ${now})
-    SELECT count(DISTINCT participant_key) FILTER (WHERE observed_at > ${now}::timestamptz - interval '48 hours') AS p48,
+    SELECT count(DISTINCT participant_key) FILTER (WHERE observed_at > ${windowStart}) AS in_window,
+           coalesce(bool_or(picked) FILTER (WHERE observed_at > ${windowStart}), false) AS picked,
            count(DISTINCT participant_key) FILTER (WHERE observed_at > ${now}::timestamptz - interval '6 hours'
              AND participant_key NOT IN (SELECT participant_key FROM cs x WHERE x.observed_at <= ${now}::timestamptz - interval '6 hours')) AS p6,
            count(*) FILTER (WHERE kind = 'editorial' AND observed_at > ${now}::timestamptz - interval '24 hours') AS r24
@@ -155,11 +157,11 @@ export async function loadStoryDetail(storyId: number, now = new Date()): Promis
   const entry = ranking?.entries.find((e) => e.storyId === storyId) ?? null;
   // Only hours observed in full are drawn (the chart leaves a gap otherwise), over one comparable group.
   const heat = await heatSeries(storyId, now);
-  // Complete when none of the sources behind the last 48 hours' participants is behind on collection.
+  // Complete when none of the sources behind the window's participants is behind on collection.
   const behind = behindSources(await sourceClocks(), now.getTime(), true);
   const [partial] = behind.length
     ? await sql<{ n: number }[]>`SELECT count(*)::int AS n FROM ${currentSignals()} cs WHERE story_id = ${storyId} AND source_id = ANY(${behind}::text[])
-                                  AND observed_at > ${now}::timestamptz - interval '48 hours' AND observed_at <= ${now}`
+                                  AND observed_at > ${windowStart} AND observed_at <= ${now}`
     : [{ n: 0 }];
   const [related, topics, texts] = await Promise.all([relatedStories(storyId, now), topicsOfStory(storyId, now), storyTexts([storyId], now)]);
   const text = texts.get(storyId)!;
@@ -183,7 +185,8 @@ export async function loadStoryDetail(storyId: number, now = new Date()): Promis
     latest: latest.title,
     latestReport: { id: latest.id },
     whyHot: {
-      participants48h: Number(why?.p48 ?? 0),
+      participantsInWindow: Number(why?.in_window ?? 0),
+      selectedVote: HOT.selectedVote && why?.picked === true,
       newParticipants6h: Number(why?.p6 ?? 0),
       recentReports24h: Number(why?.r24 ?? 0),
       observationComplete: !partial?.n,
@@ -242,14 +245,11 @@ async function queryHotCovers({ entries }: HotRanking) {
 
 export async function loadHot(): Promise<HotResponse> {
   const ranking = await latestHotRanking();
-  if (!ranking) return { computedAt: null, windowHours: 48, entries: [] };
+  if (!ranking) return { computedAt: null, windowHours: HOT.windowHours, entries: [] };
   const floorMs = listingDayFloor().getTime();
-  // 热点 board order: newest first by the story's latest public report time (publish time, not crawl);
-  // a missing/invalid time sorts last, then the stored heat rank.
-  const latestMs = (e: { latestAt: string }) => { const t = Date.parse(e.latestAt); return Number.isFinite(t) ? t : Number.NEGATIVE_INFINITY; };
-  const freshHotEntries = ranking.entries.filter((e) => Date.parse(e.latestAt) >= floorMs)
-    .sort((a, b) => (latestMs(b) - latestMs(a)) || a.rank - b.rank);
-  if (!freshHotEntries.length) return { computedAt: ranking.computedAt, windowHours: 48, entries: [] };
+  // The board keeps the ranking's order, heat first, like its rank numbers and the home strip.
+  const freshHotEntries = ranking.entries.filter((e) => Date.parse(e.latestAt) >= floorMs);
+  if (!freshHotEntries.length) return { computedAt: ranking.computedAt, windowHours: HOT.windowHours, entries: [] };
   const freshRanking = { ...ranking, entries: freshHotEntries };
   const at = new Date(ranking.computedAt);
   const [sparks, covers, extras] = await Promise.all([
@@ -262,7 +262,7 @@ export async function loadHot(): Promise<HotResponse> {
   ]);
   return {
     computedAt: ranking.computedAt,
-    windowHours: 48,
+    windowHours: HOT.windowHours,
     entries: freshHotEntries.map((e) => {
       const picture = covers.get(e.storyId);
       const coverUrl = picture ? proxiedImage(picture.url, "full") : null;
