@@ -25,7 +25,7 @@ export function ReportLayout({ kind, index, current, today, outline = [], back, 
 }) {
   const [outlineOpen, setOutlineOpen] = useState(false);
   return (
-    <div className="report-shell lg:-mx-7 lg:-mb-[72px] lg:-mt-6 lg:flex lg:min-h-dvh">
+    <div className="report-shell lg:-mx-5 lg:-mb-[72px] lg:-mt-6 lg:flex lg:min-h-dvh wide:-mx-7">
       <ReportArchive kind={kind} index={index} current={current} />
       <div className="min-w-0 flex-1 pb-6 lg:flex lg:flex-col lg:items-center lg:px-10 lg:pb-16 lg:pt-9">
         {back ? (
@@ -42,6 +42,14 @@ export function ReportLayout({ kind, index, current, today, outline = [], back, 
                 )
               }
             />
+            <div className="hidden w-full max-w-[1160px] items-center justify-between gap-4 lg:flex side:hidden">
+              <KindSwitch kind={kind} phone layoutId="report-kind-narrow" />
+              {outline.length > 0 && (
+                <button type="button" onClick={() => setOutlineOpen(true)} className="inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium text-ink-3 transition-colors hover:bg-bg-sunk hover:text-ink">
+                  <IconList size={16} /> 本期目录
+                </button>
+              )}
+            </div>
             <ReportPhoneNav kind={kind} index={index} current={current} today={today} />
             {outline.length > 0 && <OutlineSheet title="本期目录" open={outlineOpen} onClose={() => setOutlineOpen(false)} outline={outline} />}
           </>
