@@ -68,7 +68,7 @@ export const REPLACEABLE_SOURCE_KINDS = ["rss", "web_list", "json_list"] as cons
 export type ReplaceableSourceKind = typeof REPLACEABLE_SOURCE_KINDS[number];
 
 export interface AdminSourceUpdate {
-  patch: Partial<Pick<AdminSource, "name" | "enabled" | "interval_minutes" | "tier" | "participation_mode" | "signal_group_id" | "first_party" | "owner_entity_id" | "site_fulltext" | "syndicate_fulltext" | "tags">> & (
+  patch: Partial<Pick<AdminSource, "name" | "enabled" | "interval_minutes" | "tier" | "selection_class" | "participation_mode" | "signal_group_id" | "first_party" | "owner_entity_id" | "site_fulltext" | "syndicate_fulltext" | "tags">> & (
     { kind?: never; config?: Record<string, unknown> } | { kind: ReplaceableSourceKind; config: Record<string, unknown> }
   );
   version: string;
@@ -80,6 +80,7 @@ export interface AdminSourceRow {
   name: string;
   kind: string;
   tier: string;
+  selection_class: string | null;
   participation_mode: string;
   enabled: boolean;
   health: string;
@@ -109,6 +110,8 @@ export interface AdminSource {
   first_party: boolean;
   owner_entity_id: string | null;
   tier: string;
+  /** A class of the industry pack's selection rules (industry/selection.ts): raises the tier's threshold. */
+  selection_class: string | null;
   participation_mode: string;
   signal_group_id: string | null;
   interval_minutes: number;
@@ -363,7 +366,7 @@ export interface AdminModelUsage {
 
 export interface AdminModels {
   days: number;
-  capabilities: Array<{ key: string; label: string; env: string; defaultModel: string; vision: boolean; current: { model: string; source: "admin" | "env" | "default" }; fallback: { model: string; primaryPaused: boolean; backupPaused: boolean; nextProbeAt: string | null } | null; usage: AdminModelUsage[] }>;
+  capabilities: Array<{ key: string; label: string; env: string; defaultModel: string; vision: boolean; current: { model: string; source: "admin" | "env" | "default"; invalid?: string }; fallback: { model: string; primaryPaused: boolean; backupPaused: boolean; nextProbeAt: string | null } | null; usage: AdminModelUsage[] }>;
   choices: Array<{ key: string; service: string; vision: boolean }>;
   history: Array<{ at: Timestamp; actor: string; subject: string; reason: string | null; before: { model: string; source: string } | null; after: { model: string; source: string } | null }>;
   benches: Array<{ id: string; label: string; sample_size: number; prompt_version: string | null; models: string[]; created_at: Timestamp }>;

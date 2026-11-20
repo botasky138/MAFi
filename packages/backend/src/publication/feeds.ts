@@ -8,12 +8,14 @@ import { config } from "../config.ts";
 import { sql } from "../db.ts";
 import { escapeXml } from "../lib/text.ts";
 import { proxyBodyImages } from "../media/imgproxy.ts";
+import { withCover, type Cover } from "../content/cover.ts";
 import { feedIssues, type FeedIssue, type ReportKind } from "./reports.ts";
 import { textToHtml } from "../content/sanitize.ts";
 import type { FeedNotice } from "../modules.ts";
 import { publicCategoryCondition, exportTranslation, xView, type ItemRow } from "./items.ts";
 import { publicSourceName } from "./rules.ts";
-import { listedCondition, seatedCondition } from "./scope.ts";
+import { SELECTION } from "@aihot/industry/selection";
+import { browsedCondition, seatedCondition } from "./scope.ts";
 import { dailyUrl, itemUrl, periodUrl, siteUrl } from "./links.ts";
 
 interface FeedMeta {
@@ -29,7 +31,7 @@ interface FeedMeta {
 const CACHE = { edgeCacheSeconds: 300 };
 
 /** What the all feed leaves out: what the site names (FEED_COPY), then what the engine always leaves out. */
-const LEFT_OUT = [...FEED_COPY.allLeavesOut, "未审内容", "低相关条目", "已合并重复条目"];
+const LEFT_OUT = [...FEED_COPY.allLeavesOut, "未审内容", "低相关条目", `${SELECTION.browseFloor} 分以下条目`, "已合并重复条目"];
 
 const FEEDS: FeedMeta[] = [
   { id: "selected", path: "/feed.xml", title: `${SITE.name} — 精选`, description: `最新 50 条 ${SITE.name} 精选摘要，保留标题、站内阅读与原文入口；需要阅读器内全文可改订 /feed/full.xml。`, homePath: "/", pollHintMinutes: 30, ...CACHE },
@@ -92,7 +94,7 @@ ${items.join("\n")}
 
 type FeedRow = Pick<ItemRow, "id" | "title" | "summary" | "url" | "category" | "published_at" | "source_name"> &
   Partial<Pick<ItemRow, "channel" | "x_post" | "zh_text" | "quoted_zh" | "language"> & {
-    syndicate: boolean; body_text: string | null; body_html: string | null; tr_html: string | null; tr_complete: boolean | null;
+    syndicate: boolean; body_text: string | null; body_html: string | null; cover: Cover | null; tr_html: string | null; tr_complete: boolean | null;
   }>;
 
 /** Readers keep feed items for days: body images in full RSS are signed for a week, not a day. */
@@ -119,7 +121,7 @@ function fullContent(r: FeedRow, aihot: string): string | null {
         : `<p><img src="${escapeXml(url)}" alt="${escapeXml(String(media.alt ?? ""))}"></p>`;
     }
   } else if (r.body_html) {
-    html = exportTranslation(r) ?? r.body_html;
+    html = withCover(exportTranslation(r) ?? r.body_html, r.cover, r.body_html);
   }
   if (!html) return null;
   return `${proxyBodyImages(html, true, FEED_IMAGE_SECONDS)}<p>—— 本文由 ${escapeXml(SITE.name)} 聚合整理，完整版与${escapeXml(subjectAfter("更多", "动态"))}见 <a href="${aihot}">${aihot}</a></p>`;
@@ -157,7 +159,7 @@ type NoticeFor = (feedPath: string) => FeedNotice | null;
 export async function itemFeed(kind: ItemFeedKind, category: PublicApiCategoryKey | null, { now = new Date(), notice }: { now?: Date; notice?: NoticeFor } = {}): Promise<string> {
   const includeContent = kind === "selected-full";
   const scope = kind === "all"
-    ? sql`${listedCondition(now)} AND coalesce(p.published_at, p.discovered_at) > ${now}::timestamptz - interval '7 days'
+    ? sql`${browsedCondition(now)} AND coalesce(p.published_at, p.discovered_at) > ${now}::timestamptz - interval '7 days'
         AND coalesce(p.published_at, p.discovered_at) <= ${now}`
     : sql`${seatedCondition(now)} ${publicCategoryCondition(category)}
         ${category ? sql`AND coalesce(p.published_at, p.discovered_at) >= ${new Date(now.getTime() - 7 * 86400_000)}` : sql``}`;
@@ -169,7 +171,7 @@ export async function itemFeed(kind: ItemFeedKind, category: PublicApiCategoryKe
     SELECT p.article_id AS id, p.title, p.summary, p.url, p.category, p.published_at, s.name AS source_name
       ${includeContent ? sql`, p.channel, p.syndicate, a.language, a.x_post,
         CASE WHEN p.channel = 'x' THEN tr.body_text END AS zh_text, qt.text_zh AS quoted_zh,
-        a.body_text, a.body_html, tr.body_html AS tr_html, tr.complete AS tr_complete` : sql``}
+        a.body_text, a.body_html, a.cover, tr.body_html AS tr_html, tr.complete AS tr_complete` : sql``}
     FROM page JOIN publications p ON p.article_id = page.article_id JOIN sources s ON s.id = p.source_id
     ${includeContent ? sql`LEFT JOIN articles a ON a.id = p.article_id AND p.syndicate
       LEFT JOIN translations tr ON tr.article_id = p.article_id AND tr.lang = 'zh' AND tr.revision >= a.revision

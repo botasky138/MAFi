@@ -1,8 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Await, isRouteErrorResponse, Link, useAsyncError, useLoaderData, useNavigate, useRevalidator, type ClientLoaderFunctionArgs } from "react-router";
 import type { Route } from "./+types/item";
-import type { FeedItemSummary, SiteItemDetail } from "@aihot/contracts/site";
-import { ITEM_COPY, SITE } from "@aihot/site";
+import { REPORT_NAMES, reportDateLabel, type FeedItemSummary, type SiteItemDetail } from "@aihot/contracts/site";
+import { ITEM_COPY, SITE, withSubject } from "@aihot/site";
 import { cachedPage, loadOr404 } from "../lib/api.server";
 import { pageReuse } from "../lib/page-reuse";
 import { articleLd, breadcrumbLd, pageMeta, siteUrl, titled } from "../lib/seo";
@@ -153,6 +153,11 @@ function hostOf(url: string): string {
   } catch {
     return "";
   }
+}
+
+/** "11月7日 AI 日报 · 头条": the daily that carries the article, named as the site names its issues. */
+function dailyName(daily: NonNullable<SiteItemDetail["daily"]>): string {
+  return `${reportDateLabel("daily", daily.key)} ${withSubject(REPORT_NAMES.daily)}${daily.lead ? " · 头条" : ""}`;
 }
 
 async function shareOrCopy(item: Pick<SiteItemDetail, "id" | "title">): Promise<"shared" | "copied" | null> {
@@ -325,6 +330,7 @@ function ItemView({ item }: { item: SiteItemDetail }) {
   const originalLabel = isX ? "在 X 查看原推" : "打开原文";
 
   const related = item.relatedStories.filter((s) => s.publicId !== item.story?.publicId);
+  const daily = item.daily && { to: `/daily/${item.daily.key}`, name: dailyName(item.daily) };
 
   const back = () => {
     if (window.history.state?.idx > 0) navigate(-1);
@@ -415,6 +421,15 @@ function ItemView({ item }: { item: SiteItemDetail }) {
         </RailSection>
       ) : (
         verdict && <RailSection title={shownScore(item.score) !== null ? "AI 评分" : undefined}>{verdict}</RailSection>
+      )}
+      {daily && (
+        <RailSection title="收录于">
+          <div className="flex flex-wrap gap-1.5">
+            <Link viewTransition to={daily.to} className="chip">
+              {daily.name}
+            </Link>
+          </div>
+        </RailSection>
       )}
       {item.topics.length > 0 && (
         <RailSection title="主题">
@@ -565,8 +580,13 @@ function ItemView({ item }: { item: SiteItemDetail }) {
             <span> · {hostOf(item.links.original)}</span>
           </p>
 
-          {(item.topics.length > 0 || item.tags.length > 0) && (
+          {(daily || item.topics.length > 0 || item.tags.length > 0) && (
             <div className="mt-4 flex flex-wrap gap-1.5 lg:hidden">
+              {daily && (
+                <Link viewTransition to={daily.to} className="chip">
+                  收录于 {daily.name}
+                </Link>
+              )}
               {item.topics.map((t) => (
                 <Link viewTransition key={t.slug} to={`/topics/${t.slug}`} className="chip">
                   {t.name}

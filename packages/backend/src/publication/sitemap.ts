@@ -95,7 +95,7 @@ export async function loadDiscoveryEntries(at = new Date(), limits?: { stories: 
   // without a dedicated public modification clock, omitting lastmod is more accurate than guessing.
   const items = await sql<{ id: string; revision: string }[]>`
     SELECT p.article_id AS id,
-      md5(concat_ws('|', p.revision::text, a.content_hash, tr.title, tr.body_html, tr.body_text, tr.complete::text, qt.text_zh,
+      md5(concat_ws('|', p.revision::text, a.content_hash, a.cover::text, tr.title, tr.body_html, tr.body_text, tr.complete::text, qt.text_zh,
         s.name, s.icon_url, st.public_id::text, st.title)) AS revision
     ${ITEM_FROM}
     WHERE ${storyReportCondition(at)} AND p.indexable

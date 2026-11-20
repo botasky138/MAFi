@@ -18,7 +18,7 @@ import { SourceAvatar } from "../../components/ui/SourceAvatar";
 import { Halftone } from "./Halftone";
 import { Nameplate } from "./Nameplate";
 import { IssueDots } from "./IssueDots";
-import { monthDay } from "@aihot/contracts/time";
+import { monthDay } from "../../lib/format.ts";
 import { EDITION, MOTTO, dateLine, dateMark, headline, metricItems, neighbourLabel, reportPath, shortDay } from "./format";
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -112,7 +112,7 @@ function Original({ c, className = "" }: { c: ReportCitation; className?: string
 function Related({ items, className = "" }: { items: ReportCitation[]; className?: string }) {
   return (
     <ul className={`space-y-1.5 ${className}`}>
-      {items.slice(0, 4).map((r) => (
+      {items.map((r) => (
         <li key={keyOf(r)} className="flex gap-2.5 text-[13.5px] leading-[1.65]">
           <span className="mt-[9px] size-1 shrink-0 rounded-full bg-ink-4" aria-hidden="true" />
           <span className="min-w-0">

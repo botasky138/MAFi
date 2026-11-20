@@ -15,7 +15,10 @@ import { promptText, promptVersion } from "../editorial/prompts.ts";
 export const RELATE_PROMPT_VERSION = promptVersion("group-pair", "group-signal");
 export const BATCH_PROMPT_VERSION = promptVersion("group-batch");
 
-/** Saved original evidence per report, shared by rendering and selected-background retrieval. */
+/**
+ * Saved original evidence per report, shared by rendering and selected-background retrieval. Long analyses
+ * put their conclusions last (one of 10,597 characters lost them at the former 6,000); longer text is still cut.
+ */
 export const GROUP_BODY_CHARS = 10_000;
 
 export const RELATIONS = ["SAME_OCCURRENCE", "SAME_STORY", "UNRELATED", "ROUNDUP"] as const;
@@ -192,6 +195,9 @@ export const STORY_REVIEW_MIN_CONFIDENCE = 0.75;
 export function reportText(title: string, summary: string | null | undefined): string {
   return `${title}。${(summary ?? "").slice(0, 300)}`;
 }
+
+/** The text a discussion post is embedded with: its title and the start of its body. */
+export const signalText = (a: { title: string; body_text: string | null }) => reportText(a.title, a.body_text?.slice(0, 300) ?? null);
 
 /** Lexical stand-in for cosine when embeddings are off (no embedding key): shared character bigrams. */
 export function lexicalSimilarity(a: string, b: string): number {

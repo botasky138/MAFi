@@ -4,11 +4,13 @@
 // Reader warnings must remain usable; rejecting a paid page must retain and reuse its receipt.
 import { tag } from "./setup.ts";
 import assert from "node:assert/strict";
+import { parseHTML } from "linkedom";
 import http from "node:http";
 import { after, before, test } from "node:test";
 import { config } from "@aihot/backend/config";
+import { DEPLOYMENT } from "@aihot/site";
 import { closeDb, sql } from "@aihot/backend/db";
-import { extractArticleBody, extractFromUrl, readable } from "@aihot/backend/content/extract";
+import { extractArticleBody, extractFromUrl, isSignInRedirect, isSignInUrl, readable } from "@aihot/backend/content/extract";
 import { upsertMaterial } from "@aihot/backend/content/materials";
 import { jinaRead } from "@aihot/backend/providers/jina";
 import { fetchDetail, fetchWebList } from "@aihot/backend/sources/web-list";
@@ -22,6 +24,7 @@ const prose = "A real report explains why a service returned 404 and how CAPTCHA
 const html = (title: string, text: string) => `<html><head><title>${title}</title><meta name="description" content="False description"></head><body><article><h1>${title}</h1><p>${text}</p><a href="/news/post">Navigation item</a></article></body></html>`;
 const signInPage = html("Sign in to Example", "Sign in to your account. Enter your email address and password to continue. ".repeat(6));
 const autofill = "A real report explains how password managers fill a sign-in form and why autofill is safer than typing. ".repeat(4);
+const consent = "Manage your consent preferences. These cookies are necessary. Confirm My Choices. Reject All. Accept All.";
 let readerHits = 0;
 const readerPages: Record<string, string> = {
   missing: `Title: 404 Not Found | Example\n\nMarkdown Content:\n${navigation}\n404 Page Not Found\nThat page does not exist.\n${navigation}`,
@@ -37,6 +40,23 @@ const server = http.createServer((req, res) => {
   res.writeHead(200, { "content-type": req.url?.startsWith("/reader/") ? "text/plain" : "text/html", "x-usage-tokens": "100" });
   if (req.url?.startsWith("/reader/")) {
     readerHits++;
+    // Like the real reader: what the request names to leave out never reaches the answer.
+    if (req.url.endsWith("/split-article")) {
+      const { document } = parseHTML(`<html><body><a href="#main" class="reader-chrome">Skip to content</a>
+        <main id="main"><article><header><h1 class="reader-chrome">Publisher headline</h1>
+          <div><a href="/photo"><img src="/photo.jpg"></a><p>Lead photo credit</p></div>
+        </header><div class="reader-chrome">Text settings</div>
+        <div><p>The opening paragraph. ${prose}</p></div>
+        <div class="reader-chrome">Advertisement</div>
+        <div><p>The ending paragraph. ${prose}</p>
+          <div class="reader-chrome">Log in to comment</div></div></article><div class="reader-chrome">Prev story</div></main></body></html>`);
+      for (const el of document.querySelectorAll(String(req.headers["x-remove-selector"]))) el.remove();
+      return void res.end(`Title: Publisher headline\n\nMarkdown Content:\n${document.body.innerHTML}`);
+    }
+    if (req.url.endsWith("/with-chrome")) {
+      const banner = req.headers["x-remove-selector"]?.toString().includes("[role=alertdialog]") ? "" : `${consent}\n\n`;
+      return void res.end(`Title: A page behind a consent banner\n\nMarkdown Content:\n${banner}${prose}`);
+    }
     return void res.end(readerPages[req.url.split("/").at(-1)!] ?? readerPages.missing);
   }
   // The form itself is long enough to be mistaken for a body by the length and density checks.
@@ -83,6 +103,14 @@ test("a missing target stays unconfirmed and its paid response is reused, not bo
   assert.equal(receipt!.usage.tokens, 100);
 });
 
+test("a body read through the reader leaves out the page's consent banner", async () => {
+  const { articleId } = await upsertMaterial({ sourceId, url: `${base}/${T}/with-chrome`, title: "A page behind a consent banner", via: "fetch" });
+  assert.equal(await extractArticleBody(articleId), "ok");
+  const [article] = await sql<{ body_text: string }[]>`SELECT body_text FROM articles WHERE id=${articleId}`;
+  assert.ok(!article!.body_text.includes("Manage your consent preferences"));
+  assert.ok(article!.body_text.includes("CAPTCHA verification"));
+});
+
 test("Reader target failures and rendered HTML challenges reject before listing or detail parsing", async () => {
   for (const name of ["missing", "status", "captcha", "html"]) {
     await assert.rejects(jinaRead(`https://example.org/${T}/${name}`, { purpose: "source_detail", subject: sourceId, ...(name === "html" ? { format: "html" as const } : {}) }), /unavailable page/i);
@@ -110,6 +138,9 @@ test("a redirect to a sign-in form cannot become the body", async () => {
   // A page that is itself on such a path and only gains a trailing slash was not sent to sign in.
   const registry = await extractFromUrl(`${base}/brand/register`, `article:${T}:registry`, {}, { paidFallback: false });
   assert.ok(registry?.text.includes("real report"), "a redirect between two addresses of the same page is no sign-in redirect");
+  // A listing's detail read is the other way in: the sign-in form supplies no title, date, summary or body.
+  const source = { id: sourceId, config: { url: `${base}/listing`, parseMode: "html" } } as never;
+  await assert.rejects(fetchDetail(`${base}/redirect`, source, { title: true, date: true, summary: true, body: true }), /unavailable page/i);
 });
 
 // A listing's navigation links to the site's sign-in and registration pages; they are not posts.
@@ -117,4 +148,40 @@ test("a listing's sign-in links are not articles", async () => {
   const source = { id: sourceId, config: { url: `${base}/listing`, parseMode: "html", itemSelector: "a[href]", linkSelector: "a[href]" } } as never;
   const candidates = await fetchWebList(source);
   assert.deepEqual(candidates.map((c) => c.url).sort(), [`${base}/article`]);
+});
+
+// Devise answers /users/sign_in and WordPress /wp-login.php: real sign-in forms that were not on the path
+// list, so a redirect to one passed the length test and became the body (KKKKhazix/AIHOT#275).
+test("the sign-in paths common sites use are sign-in paths; pages that only carry an auth word are not", () => {
+  for (const path of ["/users/sign_in", "/users/sign_up", "/wp-login.php", "/member/login.php", "/en/register.html", "/login"]) {
+    assert.equal(isSignInUrl(`https://x.com${path}`), true, path);
+  }
+  assert.equal(isSignInRedirect("https://x.com/post/1", "https://x.com/users/sign_in"), true);
+  assert.equal(isSignInRedirect("https://x.com/post/1", "https://x.com/wp-login.php?redirect_to=https%3A%2F%2Fx.com%2Fpost%2F1"), true);
+  assert.equal(isSignInRedirect("https://x.com/post/1", "https://x.com/member/login.php"), true);
+  for (const path of ["/authorized-retailer", "/authors", "/sso-products", "/login.company"]) assert.equal(isSignInUrl(`https://x.com${path}`), false, path);
+  assert.equal(isSignInRedirect("https://x.com/users/sign_in", "https://x.com/users/sign_in/"), false);
+});
+
+
+test("a rendered article uses only its host's extra chrome selector and keeps the article's sections and photo", async () => {
+  const edition = DEPLOYMENT as { renderedArticleRemoveSelectors?: Record<string, string> };
+  const previous = edition.renderedArticleRemoveSelectors;
+  try {
+    const url = `${base}/${T}/split-article`;
+    const subject = `probe:${T}:split-article`;
+    edition.renderedArticleRemoveSelectors = { "other.example": ".reader-chrome" };
+    const unmatched = await extractFromUrl(url, subject);
+    assert.match(unmatched!.text, /Prev story/, "another host's rule does not apply");
+    edition.renderedArticleRemoveSelectors = { "127.0.0.1": ".reader-chrome" };
+    const got = await extractFromUrl(url, subject);
+    assert.equal(got?.via, "jina");
+    assert.match(got!.text, /The opening paragraph/);
+    assert.match(got!.text, /The ending paragraph/);
+    assert.match(got!.text, /Lead photo credit/);
+    assert.match(got!.html, /photo\.jpg/);
+    assert.doesNotMatch(got!.text, /Publisher headline|Skip to content|Text settings|Advertisement|Log in|Prev story/);
+  } finally {
+    edition.renderedArticleRemoveSelectors = previous;
+  }
 });
