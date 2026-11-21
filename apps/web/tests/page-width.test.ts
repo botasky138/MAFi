@@ -1,6 +1,9 @@
 // Failures: an unbroken URL in a report's lead widened the phone layout and pushed the fifth tab off
 // screen; an open "另外 N 家也报道了" took its longest title's width and scrolled a narrow desktop window
-// sideways (2026-10-16). Pages must fit the window at phone, narrow-phone and narrow-desktop widths.
+// sideways (2026-10-16). Pages must fit the window at phone, narrow-phone, unfolded-foldable (669 upright,
+// 711 for an Android foldable, which reads the desktop pages beside the rail) and full-sidebar (941) widths.
+// Narrow desktops read in one column (2026-10-30): what a side column holds there (an article's reason,
+// topics, original and outline; the switch between reports) must stay within reach.
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { chromium, webkit, expect, type Browser, type Page } from "@playwright/test";
@@ -55,7 +58,7 @@ const PAGES: Array<{ path: string; ready: (page: Page, width: number) => Promise
     path: "/",
     ready: async (page: Page, width: number) => {
       // Desktop opens the group in place; phones open it in a sheet.
-      if (width < 961) return expect(page.getByRole("link", { name: "代表文章", exact: true })).toBeVisible();
+      if (width < 700) return expect(page.getByRole("link", { name: "代表文章", exact: true })).toBeVisible();
       await page.getByRole("button", { name: "另外 1 家也报道了" }).filter({ visible: true }).click();
       await expect(page.getByRole("link", { name: longTitle })).toBeVisible();
     },
@@ -81,9 +84,9 @@ function pastEdge(width: number): string[] {
   ];
 }
 
-for (const engine of ["Chromium", "WebKit"] as const) test(`${engine}: pages stay within the screen at 320, 393 and 1024 pixels`, async () => {
-  for (const width of [393, 320, 1024]) {
-    const context = await (engine === "Chromium" ? chrome : safari).newContext({ viewport: { width, height: 873 }, isMobile: width < 961, reducedMotion: "reduce" });
+for (const engine of ["Chromium", "WebKit"] as const) test(`${engine}: pages stay within the screen at 320, 393, 669, 711 and 941 pixels`, async () => {
+  for (const width of [393, 320, 669, 711, 941]) {
+    const context = await (engine === "Chromium" ? chrome : safari).newContext({ viewport: { width, height: 873 }, isMobile: width < 941, reducedMotion: "reduce" });
     try {
       const page = await context.newPage();
       for (const { path, ready } of PAGES) {

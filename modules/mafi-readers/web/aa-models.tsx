@@ -186,7 +186,7 @@ export default function AaModels() {
           <span>AA 智能指数 v{result.data.intelligence_index_version} · 已取得 {result.data.models.length} 个模型 · 当前筛选 {filtered.length} 个</span>
           <span className="text-ink-4">免费 API 快照不含开放权重 / 模态字段；推理类型由模型名标注推断。未勾选模型时显示全部。</span>
         </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 wide:grid-cols-4">
           <FilterField label="模型">
             <DarkModelTreeSelect
               label="按模型筛选"
