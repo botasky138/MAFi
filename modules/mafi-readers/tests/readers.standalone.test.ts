@@ -239,6 +239,39 @@ test("missing AA key and public deployments never fetch or disclose private cach
   for (const url of ["https://localhost.attacker.example", "http://127.0.0.2", "http://localhost@evil.example", "file://localhost", "garbage"]) assert.equal(isLocalSite(url), false);
 });
 
+test("external SITE_URL stays local_only by default, and works when allowExternalSite is enabled", async () => {
+  let calls = 0;
+  const store = new MemoryStore();
+  const fetch: ReaderFetch = async () => { calls++; return response(aaPage()); };
+  const blockedReaders = createReaders({
+    siteUrl: "https://mafi.botasky.uk",
+    aaKey: () => "synthetic-key",
+    fetch,
+    store,
+    now: () => AT,
+  });
+  assert.equal((await blockedReaders.aaModels()).status, "local_only");
+  assert.equal((await blockedReaders.aaRefresh()).status, "local_only");
+  assert.equal(calls, 0);
+
+  const allowedReaders = createReaders({
+    siteUrl: "https://mafi.botasky.uk",
+    aaKey: () => "synthetic-key",
+    fetch,
+    store,
+    now: () => AT,
+    allowExternalSite: () => true,
+  });
+  const loaded = await allowedReaders.aaModels();
+  assert.equal(loaded.status, "ready");
+  assert.equal(loaded.data?.models.length, 1);
+  assert.equal(calls, 1);
+
+  const refreshed = await allowedReaders.aaRefresh();
+  assert.equal(refreshed.status, "ready");
+  assert.equal(calls, 2);
+});
+
 test("AA full pagination preserves official response order, nulls, version and per-request counts across restart", async () => {
   const urls: string[] = [];
   const store = new MemoryStore();

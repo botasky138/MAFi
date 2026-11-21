@@ -10,3 +10,11 @@ export function codexResetEnabled(): boolean {
 export function githubTrendEnabled(): boolean {
   return explicitlyEnabled(process.env.MAFI_GITHUB_TREND_ENABLED);
 }
+
+/**
+ * Only enable on private/authenticated self-hosted deployments (e.g., behind Cloudflare Zero Trust Access)
+ * so external readers like AA and Tibo work on a non-loopback SITE_URL without exposing them publicly.
+ */
+export function readersAllowExternalSite(): boolean {
+  return explicitlyEnabled(process.env.MAFI_READERS_ALLOW_EXTERNAL_SITE);
+}

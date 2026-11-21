@@ -2,7 +2,7 @@ import path from "node:path";
 import type { ServerModule } from "@aihot/backend/modules";
 import { config } from "@aihot/backend/config";
 import { guardedFetch } from "@aihot/backend/lib/http-fetch";
-import { codexResetEnabled, githubTrendEnabled } from "./flags.ts";
+import { codexResetEnabled, githubTrendEnabled, readersAllowExternalSite } from "./flags.ts";
 import { FileReaderStore } from "./backend/cache.ts";
 import { createReaders, type Readers } from "./backend/readers.ts";
 import { isTrendSince, readGithubTrend, refreshGithubTrend, type TrendFetchResult } from "./backend/github-trend.ts";
@@ -137,6 +137,7 @@ export function createReaderServer(readers?: Readers, trend?: Partial<TrendContr
     fetch: guardedFetch,
     store: new FileReaderStore(path.join(config.dataDir, "mafi-readers")),
     codexEnabled: codexResetEnabled,
+    allowExternalSite: readersAllowExternalSite,
   });
   // The admin's forced run is an API request: it fetches lists and stars, and leaves the purpose lines to
   // the worker's next tick, since models are called only in worker jobs.

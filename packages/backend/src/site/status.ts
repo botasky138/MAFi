@@ -1,13 +1,115 @@
-// Cheap site/runtime health for the preview chrome. No LLM: DB ping + pid file + log/report mtimes.
+// Cheap site/runtime health for the preview chrome and Docker worker deployments. No LLM.
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import type { SiteStatus, SiteStatusLight } from "@aihot/contracts/site";
-import { REPO_ROOT } from "../config.ts";
+import { config, REPO_ROOT } from "../config.ts";
 import { sql } from "../db.ts";
 
 const COLLECT_OK_MS = 15 * 60_000;
 const COLLECT_STALE_MS = 35 * 60_000;
 const ANALYZE_STALE_MS = 90 * 60_000;
+const WORKER_HEARTBEAT_STALE_MS = 5 * 60_000;
+
+export interface WorkerStatusInput {
+  now: Date;
+  db: "ok" | "down";
+  newestArticleAt: string | null;
+  workerHeartbeatAt: string | null;
+  collectEnabled: boolean;
+  modelCallsEnabled: boolean;
+  lastScheduleRun: { status: string; at: string | null } | null;
+  lastSweepRun: { status: string; at: string | null } | null;
+  lastSourceOkAt: string | null;
+  enabledSources: number;
+  failingSources: number;
+  lastAnalyzeAt: string | null;
+}
+
+function toIso(value: Date | string | null | undefined): string | null {
+  if (!value) return null;
+  const ms = value instanceof Date ? value.getTime() : Date.parse(value);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+}
+
+function latestIso(...values: Array<string | null | undefined>): string | null {
+  let bestMs = Number.NEGATIVE_INFINITY;
+  for (const value of values) {
+    if (!value) continue;
+    const ms = Date.parse(value);
+    if (Number.isFinite(ms) && ms > bestMs) bestMs = ms;
+  }
+  return Number.isFinite(bestMs) ? new Date(bestMs).toISOString() : null;
+}
+
+/** Derives SiteStatus from DB heartbeat, job_runs, sources, and analyses for Docker/systemd worker deployments. */
+export function deriveWorkerStatus(input: WorkerStatusInput): SiteStatus {
+  const checkedAt = input.now.toISOString();
+  const nowMs = input.now.getTime();
+
+  let autoLoop: SiteStatus["autoLoop"] = "missing";
+  if (input.workerHeartbeatAt) {
+    const hbMs = Date.parse(input.workerHeartbeatAt);
+    autoLoop = Number.isFinite(hbMs) && nowMs - hbMs <= WORKER_HEARTBEAT_STALE_MS ? "running" : "dead";
+  }
+
+  const lastCollectAt = latestIso(input.lastScheduleRun?.at, input.lastSourceOkAt);
+  let collect: SiteStatus["collect"] = "unknown";
+  if (input.collectEnabled) {
+    if (input.lastScheduleRun?.status === "failed" || (input.enabledSources > 0 && input.failingSources >= input.enabledSources)) {
+      collect = "failing";
+    } else if (lastCollectAt) {
+      const age = nowMs - Date.parse(lastCollectAt);
+      collect = Number.isFinite(age) && age <= COLLECT_OK_MS ? "ok" : "stale";
+    }
+  }
+
+  const effectiveAnalyzeAt = latestIso(input.lastAnalyzeAt, input.lastSweepRun?.at);
+  let analyze: SiteStatus["analyze"] = "unknown";
+  if (input.modelCallsEnabled && effectiveAnalyzeAt) {
+    const age = nowMs - Date.parse(effectiveAnalyzeAt);
+    analyze = Number.isFinite(age) && age <= ANALYZE_STALE_MS ? "ok" : "stale";
+  }
+
+  let light: SiteStatusLight = "green";
+  let label = "运行正常";
+  let detail = !input.collectEnabled || !input.modelCallsEnabled
+    ? "API、数据库与后台 Worker 运行正常（部分安全阀关闭）"
+    : "API、数据库与后台 Worker 运行正常";
+
+  if (input.db === "down" || autoLoop === "dead" || collect === "failing") {
+    light = "red";
+    label = "服务异常";
+    if (input.db === "down") detail = "数据库不可用";
+    else if (autoLoop === "dead") detail = "后台 Worker 心跳超时";
+    else detail = "采集任务失败";
+  } else if (autoLoop === "missing" || collect === "stale" || analyze === "stale") {
+    light = "yellow";
+    if (collect === "stale") {
+      label = "采集延迟";
+      detail = "采集结果偏旧或延迟";
+    } else if (autoLoop === "missing") {
+      label = "需关注";
+      detail = "未检测到后台 Worker 心跳";
+    } else {
+      label = "运行降级";
+      detail = "分析偏旧，等待下一轮精选";
+    }
+  }
+
+  return {
+    light,
+    label,
+    detail,
+    db: input.db,
+    autoLoop,
+    collect,
+    analyze,
+    lastCollectAt,
+    lastAnalyzeAt: effectiveAnalyzeAt,
+    newestArticleAt: input.newestArticleAt,
+    checkedAt,
+  };
+}
 
 type PidAutoLoop = {
   pid?: number;
@@ -101,6 +203,60 @@ export async function loadSiteStatus(now = new Date()): Promise<SiteStatus> {
   const pidPath = path.join(REPO_ROOT, ".data", "preview-pids.json");
   const pids = readJson<PidFile>(pidPath);
   const loop = pids?.autoLoop;
+
+  if (!loop) {
+    const collectEnabled = process.env.COLLECT_ENABLED === "true";
+    const modelCallsEnabled = config.modelCallsEnabled;
+    if (db === "down") {
+      return deriveWorkerStatus({
+        now,
+        db: "down",
+        newestArticleAt: null,
+        workerHeartbeatAt: null,
+        collectEnabled,
+        modelCallsEnabled,
+        lastScheduleRun: null,
+        lastSweepRun: null,
+        lastSourceOkAt: null,
+        enabledSources: 0,
+        failingSources: 0,
+        lastAnalyzeAt: null,
+      });
+    }
+    const [hbRows, runRows, sourceRows, analyzeRows] = await Promise.all([
+      sql<{ updated_at: Date }[]>`SELECT updated_at FROM settings WHERE key = 'heartbeat.worker' LIMIT 1`,
+      sql<{ job: string; status: string; at: Date | null }[]>`
+        SELECT DISTINCT ON (job) job, status, COALESCE(finished_at, started_at) AS at
+        FROM job_runs
+        WHERE job IN ('sources.schedule', 'content.sweep')
+        ORDER BY job, started_at DESC`,
+      sql<{ last_ok: Date | null; enabled_count: number; failing_count: number }[]>`
+        SELECT max(last_ok_at) AS last_ok,
+               count(*)::int AS enabled_count,
+               count(*) FILTER (WHERE health = 'failing')::int AS failing_count
+        FROM sources
+        WHERE enabled`,
+      sql<{ last_analyze: Date | null }[]>`SELECT max(created_at) AS last_analyze FROM analyses`,
+    ]);
+    const scheduleRow = runRows.find((r) => r.job === "sources.schedule");
+    const sweepRow = runRows.find((r) => r.job === "content.sweep");
+    const sourceRow = sourceRows[0];
+    return deriveWorkerStatus({
+      now,
+      db: "ok",
+      newestArticleAt,
+      workerHeartbeatAt: toIso(hbRows[0]?.updated_at),
+      collectEnabled,
+      modelCallsEnabled,
+      lastScheduleRun: scheduleRow ? { status: scheduleRow.status, at: toIso(scheduleRow.at) } : null,
+      lastSweepRun: sweepRow ? { status: sweepRow.status, at: toIso(sweepRow.at) } : null,
+      lastSourceOkAt: toIso(sourceRow?.last_ok),
+      enabledSources: sourceRow?.enabled_count ?? 0,
+      failingSources: sourceRow?.failing_count ?? 0,
+      lastAnalyzeAt: toIso(analyzeRows[0]?.last_analyze),
+    });
+  }
+
   let autoLoop: SiteStatus["autoLoop"] = "missing";
   if (loop?.pid) autoLoop = pidAlive(loop.pid) && !loop.stoppedAt ? "running" : "dead";
 

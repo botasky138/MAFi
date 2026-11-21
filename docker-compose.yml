@@ -19,6 +19,8 @@ x-backend: &backend
     INGEST_RATE_LIMIT: ${INGEST_RATE_LIMIT:-10}
   volumes:
     - data:/data
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
   depends_on:
     db:
       condition: service_healthy
@@ -76,6 +78,8 @@ services:
       SITE_URL: ${SITE_URL:-http://localhost:3000}
       TRUST_PROXY: ${TRUST_PROXY:-false}
       AIHOT_RELEASE: ${AIHOT_RELEASE:-}
+      MAFI_GITHUB_TREND_ENABLED: ${MAFI_GITHUB_TREND_ENABLED:-false}
+      MAFI_CODEX_RESET_ENABLED: ${MAFI_CODEX_RESET_ENABLED:-false}
       WEB_HOST: 0.0.0.0
       WEB_PORT: "3000"
     ports:
@@ -96,6 +100,16 @@ services:
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy:/data
+    depends_on:
+      - web
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
     depends_on:
       - web
 

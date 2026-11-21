@@ -1,0 +1,22 @@
+# 绿联 NAS（UGOS Pro）部署覆盖配置：将数据库与附件数据卷映射到 NAS 宿主机目录，便于备份与管理。
+# 用法（建议在 .env 中同时配置 NAS_DATA_ROOT=/volume1/docker/mafi）：
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.nas.override.yml --profile tunnel up -d --build
+# 只导入或启动数据库时：
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.nas.override.yml up -d db
+
+x-nas-data-volumes: &nas-data-volumes
+  - ${NAS_DATA_ROOT:-./.nas-data}/data:/data
+
+services:
+  db:
+    volumes:
+      - ${NAS_DATA_ROOT:-./.nas-data}/pgdata:/var/lib/postgresql/data
+
+  setup:
+    volumes: *nas-data-volumes
+
+  api:
+    volumes: *nas-data-volumes
+
+  worker:
+    volumes: *nas-data-volumes

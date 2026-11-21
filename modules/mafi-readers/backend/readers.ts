@@ -20,6 +20,8 @@ export interface ReaderOptions {
   now?: () => number;
   /** When omitted, only the exact env string true turns Tibo collection back on. */
   codexEnabled?: () => boolean;
+  /** Opt-in allowance for non-loopback SITE_URL on private/authenticated deployments. */
+  allowExternalSite?: () => boolean;
 }
 export function isLocalSite(siteUrl: string): boolean {
   try {
@@ -37,6 +39,7 @@ function etag(response: GuardedResponse): string | null {
 export function createReaders(options: ReaderOptions) {
   const now = options.now ?? Date.now;
   const cache = new ReaderCache(options.store, now);
+  const siteAllowed = () => isLocalSite(options.siteUrl) || (options.allowExternalSite?.() ?? false);
   async function request(url: string, headers: Record<string, string>, noteQuota?: LoadContext["noteQuota"]): Promise<GuardedResponse> {
     // URLs are assembled here only, never from upstream content or query-string addresses.
     const target = new URL(url);
@@ -67,7 +70,7 @@ export function createReaders(options: ReaderOptions) {
         } catch { data = null; fetchedAt = null; }
         return { status: "paused", sourceUrl: AUTHOR_SOURCE + "/codex-reset", fetchedAt, nextRefreshAt: null, message: "Tibo 重置监控已暂停，未请求上游。", data };
       }
-      if (!isLocalSite(options.siteUrl)) return blocked(AUTHOR_SOURCE + "/codex-reset", "local_only");
+      if (!siteAllowed()) return blocked(AUTHOR_SOURCE + "/codex-reset", "local_only");
       const result = await cache.get("codex-resets", AUTHOR_SOURCE + "/codex-reset", 600_000, (v) => parseCodex(v, true), async ({ etag: tag }) => {
         const response = await request(CODEX_URL, tag ? { "if-none-match": tag } : {});
         return { data: response.status === 304 ? null : parseCodex(JSON.parse(response.text())), etag: response.status === 304 ? etag(response) ?? tag : etag(response), notModified: response.status === 304 };
@@ -75,7 +78,7 @@ export function createReaders(options: ReaderOptions) {
       return { ...result, data: result.data ? recentCodex(result.data, now()) : null };
     },
     async aaModels(): Promise<ReadResult<AaData>> {
-      if (!isLocalSite(options.siteUrl)) return blocked(AA_SOURCE, "local_only");
+      if (!siteAllowed()) return blocked(AA_SOURCE, "local_only");
       const key = options.aaKey?.()?.trim();
       if (!key) return blocked(AA_SOURCE, "needs_key");
       const result = await cache.get("aa-models", AA_SOURCE, AA_TTL_MS, parseAaStored, (context) => loadAa(key, context));
@@ -86,7 +89,7 @@ export function createReaders(options: ReaderOptions) {
      * has fewer requests left than a complete list takes. Says which models are new against the list it replaced.
      */
     async aaRefresh(): Promise<AaRefreshResult> {
-      if (!isLocalSite(options.siteUrl)) return { ...summary(blocked(AA_SOURCE, "local_only")), refused: null, added: [], addedCount: 0, removedCount: 0 };
+      if (!siteAllowed()) return { ...summary(blocked(AA_SOURCE, "local_only")), refused: null, added: [], addedCount: 0, removedCount: 0 };
       const key = options.aaKey?.()?.trim();
       if (!key) return { ...summary(blocked(AA_SOURCE, "needs_key")), refused: null, added: [], addedCount: 0, removedCount: 0 };
       const outcome = await cache.refresh("aa-models", AA_SOURCE, AA_TTL_MS, parseAaStored, (context) => loadAa(key, context), {
